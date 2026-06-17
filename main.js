@@ -438,17 +438,18 @@ ipcMain.handle('install-update', () => {
 // successful pairing. This overrides any PIN set in the local config file, so
 // operators can rotate the PIN from the back office without touching each machine.
 ipcMain.on('set-supervisor-pin', (_, pin) => {
-  if (config && pin) {
-    config.supervisorPin = String(pin);
-    console.log('[kiosk] Supervisor PIN updated from server settings');
+  if (config) {
+    config.supervisorPin = pin ? String(pin) : '';
+    kioskMode = !isDev && !!config.supervisorPin;
+    console.log('[kiosk] Supervisor PIN updated from server settings, kioskMode:', kioskMode);
   }
 });
 
 ipcMain.handle('confirm-exit', (_, pin) => {
   const supervisorPin = config?.supervisorPin;
 
-  // No PIN configured → kiosk mode is off, allow exit without any PIN check.
-  if (!supervisorPin) {
+  // No PIN configured or kiosk mode off → allow exit without any PIN check.
+  if (!kioskMode || !supervisorPin) {
     supervisorExitAllowed = true;
     globalShortcut.unregisterAll();
     setImmediate(() => app.quit());
