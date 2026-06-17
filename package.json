@@ -1,0 +1,28 @@
+{
+  "name": "equip-portal-v2",
+  "version": "1.0.0",
+  "description": "Equip Portal 2.0 — Offline-capable Electron desktop app",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "rebuild-native": "electron-rebuild -f -w better-sqlite3,serialport",
+    "build:ui": "cd portal-ui && npm install && npm run build",
+    "build:mac": "npm run build:ui && electron-builder --config electron-builder.config.js --mac",
+    "build:win": "npm run build:ui && electron-builder --config electron-builder.config.js --win",
+    "build:linux": "npm run build:ui && electron-builder --config electron-builder.config.js --linux"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "electron-updater": "^6.3.4",
+    "express": "^4.18.2",
+    "serialport": "^12.0.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@electron/notarize": "^2.3.2",
+    "@electron/rebuild": "^3.6.0",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.0.0"
+  }
+}

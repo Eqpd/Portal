@@ -1,0 +1,22 @@
+{
+  "apiBaseUrl": "https://eqpd.co.nz",
+  "portalPairingCode": "",
+  "rfidInputMode": "keyboard",
+  "rfidReader": {
+    "host": "192.168.1.100",
+    "port": 6000,
+    "reconnectIntervalMs": 5000
+  },
+  "irSensor": {
+    "comPort": "COM3",
+    "baudRate": 9600
+  },
+  "display": {
+    "fullscreen": true
+  },
+  "localServer": {
+    "port": 0
+  },
+  "supervisorPin": "",
+  "githubToken": ""
+}
