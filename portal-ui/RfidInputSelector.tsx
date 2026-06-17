@@ -20,6 +20,7 @@ export default function RfidInputSelector({ onClose }: Props) {
   const [apiBaseUrl, setApiBaseUrl] = useState('');
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
 
   useEffect(() => {
     const eApi = (window as any).electronAPI;
@@ -31,6 +32,7 @@ export default function RfidInputSelector({ onClose }: Props) {
       if (cfg.irSensor?.comPort) setComPort(cfg.irSensor.comPort);
       if (cfg.irSensor?.baudRate) setBaudRate(String(cfg.irSensor.baudRate));
       if (cfg.apiBaseUrl) setApiBaseUrl(cfg.apiBaseUrl);
+      if (cfg.appVersion) setAppVersion(cfg.appVersion);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
@@ -147,6 +149,13 @@ export default function RfidInputSelector({ onClose }: Props) {
                 </Button>
                 <Button variant="outline" onClick={onClose}>Close</Button>
               </div>
+
+              {appVersion && (
+                <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
+                  <span>Equip Portal</span>
+                  <span className="font-mono bg-slate-100 px-2 py-0.5 rounded">v{appVersion}</span>
+                </div>
+              )}
             </>
           )}
         </div>

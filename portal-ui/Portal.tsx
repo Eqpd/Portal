@@ -7,6 +7,7 @@ import { EquipLogo } from "./components/ui/equip-logo";
 import {
   AlertCircle, Link2, Link2Off, Shield,
   CheckCircle, XCircle, Trash2, Settings, Wifi, WifiOff, Clock,
+  Download, RefreshCw,
 } from "lucide-react";
 import { getCategoryIcon, AvailabilityGrid, RecentMovements } from "@portal-shared/index";
 import type { RecentMovement } from "@portal-shared/index";
@@ -151,6 +152,15 @@ export default function Portal() {
   const [electronInputMode, setElectronInputMode] = useState<'keyboard' | 'tcp' | 'serial'>('keyboard');
   const [uiUpdatePending, setUiUpdatePending] = useState(false);
 
+  type AppUpdateStatus =
+    | { state: 'idle' }
+    | { state: 'checking' }
+    | { state: 'available'; version: string }
+    | { state: 'downloading'; percent: number }
+    | { state: 'ready'; version: string }
+    | { state: 'error'; message: string };
+  const [appUpdate, setAppUpdate] = useState<AppUpdateStatus>({ state: 'idle' });
+
   // ── Kiosk exit dialog state ──────────────────────────────────────────────────
   const [showExitDialog, setShowExitDialog] = useState(false);
   const [exitPin, setExitPin] = useState("");
@@ -258,10 +268,16 @@ export default function Portal() {
       eApi.onUiUpdate(() => setUiUpdatePending(true));
     }
 
+    // App binary update notifications from electron-updater
+    if (eApi.onUpdateStatus) {
+      eApi.onUpdateStatus((status: AppUpdateStatus) => setAppUpdate(status));
+    }
+
     return () => {
       eApi.removeListener?.('sync-status');
       eApi.removeListener?.('request-exit');
       eApi.removeListener?.('ui-updated');
+      eApi.removeListener?.('update-status');
     };
   }, []);
 
@@ -986,6 +1002,47 @@ export default function Portal() {
           </div>
         </div>
       </div>
+
+      {/* ── App update banner ── */}
+      {isElectron && (appUpdate.state === 'available' || appUpdate.state === 'downloading' || appUpdate.state === 'ready') && (
+        <div className={`flex items-center gap-3 px-4 py-2 flex-shrink-0 text-sm font-medium ${
+          appUpdate.state === 'ready'
+            ? 'bg-emerald-600 text-white'
+            : 'bg-indigo-600 text-white'
+        }`}>
+          {appUpdate.state === 'available' && (
+            <>
+              <Download className="w-4 h-4 flex-shrink-0 animate-bounce" />
+              <span>Downloading update v{(appUpdate as any).version}…</span>
+            </>
+          )}
+          {appUpdate.state === 'downloading' && (
+            <>
+              <Download className="w-4 h-4 flex-shrink-0 animate-bounce" />
+              <span>Downloading update… {(appUpdate as any).percent}%</span>
+              <div className="flex-1 max-w-48 h-1.5 bg-white/30 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-white rounded-full transition-all duration-300"
+                  style={{ width: `${(appUpdate as any).percent}%` }}
+                />
+              </div>
+            </>
+          )}
+          {appUpdate.state === 'ready' && (
+            <>
+              <CheckCircle className="w-4 h-4 flex-shrink-0" />
+              <span>Update v{(appUpdate as any).version} downloaded — restart to install</span>
+              <button
+                onClick={() => (window as any).electronAPI?.installUpdate?.()}
+                className="ml-auto flex items-center gap-1.5 bg-white text-emerald-700 font-semibold text-xs px-3 py-1 rounded-full hover:bg-emerald-50 transition-colors"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Restart Now
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* ── Body ── */}
       <div className="flex-1 overflow-hidden" style={{ display: "grid", gridTemplateColumns: "3fr 1fr", gap: "0.75rem", padding: "0 1rem 1rem", minHeight: 0 }}>

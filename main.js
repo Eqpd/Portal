@@ -66,14 +66,12 @@ function setupAutoUpdater() {
     return;
   }
 
-  // Private GitHub repo — authenticate so the updater can download release assets
+  // Repo is public — no token needed to check or download releases.
+  // If a token is present in config (injected at build time), attach it anyway
+  // for forward-compatibility if the repo ever goes private.
   const ghToken = config?.githubToken;
   if (ghToken) {
     autoUpdater.requestHeaders = { Authorization: `token ${ghToken}` };
-  } else {
-    console.warn('[updater] githubToken not set in config — auto-update from private repo will fail. ' +
-      'Set githubToken in equip-portal-config.json in the app userData folder.');
-    return;
   }
 
   autoUpdater.autoDownload = true;
@@ -415,6 +413,7 @@ ipcMain.handle('get-config', () => {
     rfidReader: cfg.rfidReader || {},
     irSensor: cfg.irSensor || {},
     apiBaseUrl: cfg.apiBaseUrl || '',
+    appVersion: app.getVersion(),
   };
 });
 
