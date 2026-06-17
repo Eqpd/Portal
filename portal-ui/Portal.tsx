@@ -156,6 +156,7 @@ export default function Portal() {
   const [exitPin, setExitPin] = useState("");
   const [exitPinError, setExitPinError] = useState("");
   const [exitPinPending, setExitPinPending] = useState(false);
+  const [hasSupervisorPin, setHasSupervisorPin] = useState(false);
   const exitPinInputRef = useRef<HTMLInputElement>(null);
 
   // Ref so IPC listener always calls the latest processTag without re-subscribing
@@ -247,7 +248,7 @@ export default function Portal() {
         setShowExitDialog(true);
         setExitPin("");
         setExitPinError("");
-        setTimeout(() => exitPinInputRef.current?.focus(), 50);
+        if (hasSupervisorPin) setTimeout(() => exitPinInputRef.current?.focus(), 50);
       });
     }
 
@@ -400,8 +401,9 @@ export default function Portal() {
       // Push the server-managed supervisor PIN into the Electron main process so
       // operators can manage the kiosk exit PIN from the back office.
       const pin = (auth.settings as any)?.supervisorPin;
-      if (pin && (window as any).electronAPI?.setSupervisorPin) {
-        (window as any).electronAPI.setSupervisorPin(pin);
+      setHasSupervisorPin(!!pin);
+      if ((window as any).electronAPI?.setSupervisorPin) {
+        (window as any).electronAPI.setSupervisorPin(pin || '');
       }
       await savePortalSession({
         armouryId: auth.armoury.id,
@@ -757,7 +759,7 @@ export default function Portal() {
       <div className="h-screen w-screen bg-slate-100 flex items-center justify-center">
         {showSettings && <RfidInputSelector onClose={() => setShowSettings(false)} />}
 
-        {/* Exit PIN overlay — accessible before pairing so operators can close the app */}
+        {/* Exit overlay — accessible before pairing so operators can close the app */}
         {showExitDialog && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-8">
@@ -765,34 +767,39 @@ export default function Portal() {
                 <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-4">
                   <Shield className="w-7 h-7 text-slate-600" />
                 </div>
-                <h2 className="text-2xl font-bold text-slate-900">Enter PIN to exit</h2>
+                <h2 className="text-2xl font-bold text-slate-900">{hasSupervisorPin ? "Enter PIN to exit" : "Exit Application"}</h2>
+                {!hasSupervisorPin && <p className="text-slate-500 mt-2">Are you sure you want to close the portal?</p>}
               </div>
               <div className="space-y-4">
-                <input
-                  ref={exitPinInputRef}
-                  type="password"
-                  inputMode="numeric"
-                  value={exitPin}
-                  onChange={(e) => { setExitPin(e.target.value); setExitPinError(""); }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !exitPinPending) handleExitConfirm();
-                    if (e.key === "Escape") handleExitCancel();
-                  }}
-                  placeholder="Enter PIN"
-                  maxLength={20}
-                  disabled={exitPinPending}
-                  className="w-full text-center text-2xl tracking-widest font-mono border border-slate-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-slate-400"
-                  autoComplete="off"
-                />
-                {exitPinError && (
-                  <div className="flex items-center gap-2 text-red-600 text-sm">
-                    <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                    <span>{exitPinError}</span>
-                  </div>
+                {hasSupervisorPin && (
+                  <>
+                    <input
+                      ref={exitPinInputRef}
+                      type="password"
+                      inputMode="numeric"
+                      value={exitPin}
+                      onChange={(e) => { setExitPin(e.target.value); setExitPinError(""); }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !exitPinPending) handleExitConfirm();
+                        if (e.key === "Escape") handleExitCancel();
+                      }}
+                      placeholder="Enter PIN"
+                      maxLength={20}
+                      disabled={exitPinPending}
+                      className="w-full text-center text-2xl tracking-widest font-mono border border-slate-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                      autoComplete="off"
+                    />
+                    {exitPinError && (
+                      <div className="flex items-center gap-2 text-red-600 text-sm">
+                        <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                        <span>{exitPinError}</span>
+                      </div>
+                    )}
+                  </>
                 )}
                 <button
                   onClick={handleExitConfirm}
-                  disabled={exitPinPending || !exitPin}
+                  disabled={exitPinPending || (hasSupervisorPin && !exitPin)}
                   className="w-full bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-semibold rounded-lg py-3 transition-colors"
                 >
                   {exitPinPending ? "Verifying…" : "Confirm Exit"}
@@ -844,7 +851,11 @@ export default function Portal() {
               </Button>
             )}
             {isElectron && (
-              <Button variant="outline" onClick={() => setShowExitDialog(true)} className="w-full text-slate-500">
+              <Button variant="outline" onClick={() => {
+                setShowExitDialog(true);
+                setExitPin("");
+                setExitPinError("");
+              }} className="w-full text-slate-500">
                 <XCircle className="h-4 w-4 mr-2" />
                 Exit Application
               </Button>
@@ -866,7 +877,7 @@ export default function Portal() {
     <div className={`portal2 h-screen w-screen overflow-hidden ${bgColor} flex flex-col transition-colors duration-300`}>
       {showSettings && <RfidInputSelector onClose={() => setShowSettings(false)} />}
 
-      {/* ── Supervisor exit PIN overlay ── */}
+      {/* ── Supervisor exit overlay ── */}
       {showExitDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-8">
@@ -874,34 +885,39 @@ export default function Portal() {
               <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-4">
                 <Shield className="w-7 h-7 text-slate-600" />
               </div>
-              <h2 className="text-2xl font-bold text-slate-900">Enter PIN to exit</h2>
+              <h2 className="text-2xl font-bold text-slate-900">{hasSupervisorPin ? "Enter PIN to exit" : "Exit Application"}</h2>
+              {!hasSupervisorPin && <p className="text-slate-500 mt-2">Are you sure you want to close the portal?</p>}
             </div>
             <div className="space-y-4">
-              <input
-                ref={exitPinInputRef}
-                type="password"
-                inputMode="numeric"
-                value={exitPin}
-                onChange={(e) => { setExitPin(e.target.value); setExitPinError(""); }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !exitPinPending) handleExitConfirm();
-                  if (e.key === "Escape") handleExitCancel();
-                }}
-                placeholder="Enter PIN"
-                maxLength={20}
-                disabled={exitPinPending}
-                className="w-full text-center text-2xl tracking-widest font-mono border border-slate-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-slate-400"
-                autoComplete="off"
-              />
-              {exitPinError && (
-                <div className="flex items-center gap-2 text-red-600 text-sm">
-                  <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                  <span>{exitPinError}</span>
-                </div>
+              {hasSupervisorPin && (
+                <>
+                  <input
+                    ref={exitPinInputRef}
+                    type="password"
+                    inputMode="numeric"
+                    value={exitPin}
+                    onChange={(e) => { setExitPin(e.target.value); setExitPinError(""); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !exitPinPending) handleExitConfirm();
+                      if (e.key === "Escape") handleExitCancel();
+                    }}
+                    placeholder="Enter PIN"
+                    maxLength={20}
+                    disabled={exitPinPending}
+                    className="w-full text-center text-2xl tracking-widest font-mono border border-slate-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                    autoComplete="off"
+                  />
+                  {exitPinError && (
+                    <div className="flex items-center gap-2 text-red-600 text-sm">
+                      <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                      <span>{exitPinError}</span>
+                    </div>
+                  )}
+                </>
               )}
               <button
                 onClick={handleExitConfirm}
-                disabled={exitPinPending || !exitPin}
+                disabled={exitPinPending || (hasSupervisorPin && !exitPin)}
                 className="w-full bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-semibold rounded-lg py-3 transition-colors"
               >
                 {exitPinPending ? "Verifying…" : "Confirm Exit"}

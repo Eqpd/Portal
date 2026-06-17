@@ -214,6 +214,22 @@ function createWindow() {
   // Suppress native context menu in production
   mainWindow.webContents.on('context-menu', (e) => e.preventDefault());
 
+  // ── beforeunload interception ───────────────────────────────────────────────
+  // preload.js always registers a beforeunload handler (e.returnValue = '') which
+  // causes Electron to fire will-prevent-unload on every close/quit attempt.
+  // We must always handle this event — otherwise Electron silently blocks the quit
+  // even in non-kiosk mode. Calling e.preventDefault() here tells Electron to
+  // ignore the beforeunload prevention and allow the page to unload.
+  mainWindow.webContents.on('will-prevent-unload', (e) => {
+    if (!kioskMode || supervisorExitAllowed) {
+      e.preventDefault(); // allow unload — not in kiosk mode or supervisor authenticated
+      return;
+    }
+    // Kiosk mode, not authenticated — block unload and show PIN dialog.
+    // NOT calling e.preventDefault() keeps the window open.
+    sendToRenderer('request-exit', {});
+  });
+
   if (kioskMode) {
     // ── Close / quit interception ──────────────────────────────────────────────
     // Catches: window X button, OS close signal, Alt+F4 (Windows), Cmd+Q (macOS).
@@ -221,15 +237,6 @@ function createWindow() {
     // so the normal Electron quit lifecycle (before-quit → cleanup → closed) runs.
     mainWindow.on('close', (e) => {
       if (supervisorExitAllowed) return; // supervisor has authenticated — let through
-      e.preventDefault();
-      sendToRenderer('request-exit', {});
-    });
-
-    // ── beforeunload interception ─────────────────────────────────────────────
-    // preload.js registers window.beforeunload which causes Electron to fire
-    // will-prevent-unload. We suppress the native "Leave page?" dialog and
-    // route the event through the supervisor PIN flow instead.
-    mainWindow.webContents.on('will-prevent-unload', (e) => {
       e.preventDefault();
       sendToRenderer('request-exit', {});
     });
