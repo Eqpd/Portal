@@ -35,7 +35,11 @@ function loadConfig() {
 function saveConfigToDisk(newConfig) {
   const userDataPath = getUserDataConfigPath();
   fs.mkdirSync(path.dirname(userDataPath), { recursive: true });
-  fs.writeFileSync(userDataPath, JSON.stringify(newConfig, null, 2));
+  // supervisorPin is set dynamically by the back office each session — never persist it.
+  // Persisting it would cause kioskMode to activate on the next launch even before
+  // pairing, making it impossible to exit from the pairing screen.
+  const { supervisorPin: _drop, ...configToSave } = newConfig;
+  fs.writeFileSync(userDataPath, JSON.stringify(configToSave, null, 2));
 }
 
 const isDev = process.argv.includes('--dev');
