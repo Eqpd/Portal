@@ -40,7 +40,7 @@ module.exports = {
       { target: 'zip', arch: ['x64', 'arm64'] },
     ],
     identity: process.env.CSC_NAME || null,
-    hardenedRuntime: true,
+    hardenedRuntime: !!process.env.CSC_NAME,
     gatekeeperAssess: false,
     notarize: false,
   },
