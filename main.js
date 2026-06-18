@@ -64,6 +64,8 @@ let sync = null;
 let serverPort = null;
 
 // ── Auto-updater ──────────────────────────────────────────────────────────────
+let pendingUpdateFile = null; // path to downloaded update ZIP (set by update-downloaded)
+
 function setupAutoUpdater() {
   if (isDev) {
     console.log('[updater] Skipping auto-update in dev mode.');
@@ -78,26 +80,20 @@ function setupAutoUpdater() {
     autoUpdater.requestHeaders = { Authorization: `token ${ghToken}` };
   }
 
-  // macOS: ShipIt (the Squirrel.Mac update installer) validates code signatures
-  // and rejects unsigned / ad-hoc-signed zips. Skip auto-download on macOS and
-  // redirect the user to the GitHub releases page to install the new DMG instead.
+  // Enable auto-download on all platforms.
+  // On macOS we bypass ShipIt (Squirrel.Mac) by extracting the ZIP ourselves
+  // and doing a hot-swap via a detached shell script — no code signature needed.
   const isMac = process.platform === 'darwin';
-  autoUpdater.autoDownload = !isMac;
-  autoUpdater.autoInstallOnAppQuit = !isMac;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = !isMac; // macOS: we install manually
 
   autoUpdater.on('checking-for-update', () => {
     sendToRenderer('update-status', { state: 'checking' });
   });
 
   autoUpdater.on('update-available', (info) => {
-    console.log(`[updater] Update available: v${info.version}`);
-    if (isMac) {
-      // On macOS, skip the download — go straight to "ready" with manualInstall flag
-      // so the UI shows a "Download" button that opens the releases page.
-      sendToRenderer('update-status', { state: 'ready', version: info.version, manualInstall: true });
-    } else {
-      sendToRenderer('update-status', { state: 'available', version: info.version });
-    }
+    console.log(`[updater] Update available: v${info.version} — downloading…`);
+    sendToRenderer('update-status', { state: 'available', version: info.version });
   });
 
   autoUpdater.on('update-not-available', () => {
@@ -113,7 +109,8 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
-    console.log(`[updater] Update downloaded: v${info.version} — will install on quit.`);
+    console.log(`[updater] Update downloaded: v${info.version}`);
+    pendingUpdateFile = info.downloadedFile || null;
     sendToRenderer('update-status', { state: 'ready', version: info.version });
   });
 
@@ -450,13 +447,79 @@ ipcMain.handle('rfid-simulate-tag', (_, tag) => {
   return true;
 });
 
-ipcMain.handle('install-update', () => {
+ipcMain.handle('install-update', async () => {
   if (process.platform === 'darwin') {
-    // macOS: ShipIt can't install unsigned zips — open the releases page instead
+    if (pendingUpdateFile) {
+      try {
+        await performMacOSUpdate(pendingUpdateFile);
+        return; // performMacOSUpdate calls app.quit()
+      } catch (err) {
+        console.error('[updater] macOS hot-swap failed:', err.message);
+      }
+    }
+    // Fallback: open releases page + relaunch
     shell.openExternal('https://github.com/Eqpd/Portal/releases/latest');
+    setTimeout(() => { app.relaunch(); app.exit(0); }, 800);
   } else {
     autoUpdater.quitAndInstall(false, true);
   }
+});
+
+// Bypass ShipIt on macOS by extracting the ZIP ourselves and doing a hot-swap.
+// A tiny detached shell script replaces the running .app after we quit.
+async function performMacOSUpdate(zipPath) {
+  const os = require('os');
+  const { execFileSync, spawn } = require('child_process');
+
+  // Resolve the current .app bundle (3 levels up from the executable)
+  // e.g. /Applications/Equip Portal.app/Contents/MacOS/Equip Portal → .app
+  const currentApp = path.resolve(process.execPath, '../../..');
+  if (!currentApp.endsWith('.app')) {
+    throw new Error(`Cannot resolve .app path from execPath: ${process.execPath}`);
+  }
+  const parentDir = path.dirname(currentApp);
+
+  // Extract the downloaded ZIP to a temp dir
+  const tmpDir = path.join(os.tmpdir(), `equip-update-${Date.now()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+  execFileSync('unzip', ['-q', '-o', zipPath, '-d', tmpDir], { timeout: 60000 });
+
+  // Locate the .app bundle inside the extracted archive
+  const entries = fs.readdirSync(tmpDir);
+  const newAppName = entries.find(e => e.endsWith('.app'));
+  if (!newAppName) throw new Error('No .app bundle found in update archive');
+  const extractedApp = path.join(tmpDir, newAppName);
+
+  // Stage it alongside the current app so the move is atomic
+  const stagedApp = path.join(parentDir, `${newAppName}.update`);
+  execFileSync('cp', ['-R', extractedApp, stagedApp], { timeout: 30000 });
+
+  // Write a detached helper script:
+  //   1. Wait for this process to exit
+  //   2. Replace old app with the staged one
+  //   3. Relaunch the new app
+  const finalApp = path.join(parentDir, newAppName);
+  const scriptPath = path.join(os.tmpdir(), 'equip-portal-update.sh');
+  const script = [
+    '#!/bin/bash',
+    'sleep 1.5',
+    `rm -rf ${JSON.stringify(finalApp)}`,
+    `mv ${JSON.stringify(stagedApp)} ${JSON.stringify(finalApp)}`,
+    `open ${JSON.stringify(finalApp)}`,
+    `rm -rf ${JSON.stringify(tmpDir)}`,
+    `rm -f ${JSON.stringify(scriptPath)}`,
+  ].join('\n') + '\n';
+  fs.writeFileSync(scriptPath, script, { mode: 0o755 });
+
+  // Launch the script detached so it survives our process exiting
+  spawn('/bin/bash', [scriptPath], { detached: true, stdio: 'ignore' }).unref();
+
+  app.quit();
+}
+
+ipcMain.handle('restart-app', () => {
+  app.relaunch();
+  app.exit(0);
 });
 
 // Allow the renderer to push a server-managed PIN into the main process after

@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   installUpdate: () => ipcRenderer.invoke('install-update'),
+  restartApp: () => ipcRenderer.invoke('restart-app'),
 
   simulateRfidTag: (tag) => ipcRenderer.invoke('rfid-simulate-tag', tag),
 

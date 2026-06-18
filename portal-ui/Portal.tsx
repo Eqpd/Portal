@@ -158,9 +158,10 @@ export default function Portal() {
     | { state: 'current' }
     | { state: 'available'; version: string }
     | { state: 'downloading'; percent: number }
-    | { state: 'ready'; version: string; manualInstall?: boolean }
+    | { state: 'ready'; version: string }
     | { state: 'error'; message: string };
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus>({ state: 'idle' });
+  const [updateCountdown, setUpdateCountdown] = useState<number | null>(null);
 
   // ── Kiosk exit dialog state ──────────────────────────────────────────────────
   const [showExitDialog, setShowExitDialog] = useState(false);
@@ -271,7 +272,11 @@ export default function Portal() {
 
     // App binary update notifications from electron-updater
     if (eApi.onUpdateStatus) {
-      eApi.onUpdateStatus((status: AppUpdateStatus) => setAppUpdate(status));
+      eApi.onUpdateStatus((status: AppUpdateStatus) => {
+        setAppUpdate(status);
+        if (status.state === 'ready') setUpdateCountdown(60);
+        else setUpdateCountdown(null);
+      });
     }
 
     return () => {
@@ -290,6 +295,17 @@ export default function Portal() {
     const t = setTimeout(() => window.location.reload(), 4000);
     return () => clearTimeout(t);
   }, [uiUpdatePending, phase]);
+
+  // Countdown timer: tick once per second, install at 0
+  useEffect(() => {
+    if (updateCountdown === null) return;
+    if (updateCountdown <= 0) {
+      (window as any).electronAPI?.installUpdate?.();
+      return;
+    }
+    const t = setTimeout(() => setUpdateCountdown(c => (c !== null ? c - 1 : null)), 1000);
+    return () => clearTimeout(t);
+  }, [updateCountdown]);
 
   // ── IPC RFID subscription (tcp / serial modes only) ──────────────────────────
   useEffect(() => {
@@ -1039,20 +1055,26 @@ export default function Portal() {
             <>
               <CheckCircle className="w-4 h-4 flex-shrink-0" />
               <span>
-                {(appUpdate as any).manualInstall
-                  ? `Update v${(appUpdate as any).version} available`
-                  : `Update v${(appUpdate as any).version} downloaded — restart to install`}
+                {updateCountdown !== null
+                  ? `Update v${(appUpdate as any).version} ready — installing in ${updateCountdown}s`
+                  : `Update v${(appUpdate as any).version} ready`}
               </span>
-              <button
-                onClick={() => (window as any).electronAPI?.installUpdate?.()}
-                className="ml-auto flex items-center gap-1.5 bg-white text-emerald-700 font-semibold text-xs px-3 py-1 rounded-full hover:bg-emerald-50 transition-colors"
-              >
-                {(appUpdate as any).manualInstall ? (
-                  <><Download className="w-3 h-3" />Download DMG</>
-                ) : (
-                  <><RefreshCw className="w-3 h-3" />Restart Now</>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  onClick={() => { setUpdateCountdown(null); (window as any).electronAPI?.installUpdate?.(); }}
+                  className="flex items-center gap-1.5 bg-white text-emerald-700 font-semibold text-xs px-3 py-1 rounded-full hover:bg-emerald-50 transition-colors"
+                >
+                  <RefreshCw className="w-3 h-3" />Install Now
+                </button>
+                {updateCountdown !== null && (
+                  <button
+                    onClick={() => setUpdateCountdown(null)}
+                    className="text-white/70 hover:text-white text-xs underline"
+                  >
+                    Skip
+                  </button>
                 )}
-              </button>
+              </div>
             </>
           )}
           {appUpdate.state === 'error' && (
