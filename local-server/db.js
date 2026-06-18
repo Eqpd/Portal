@@ -209,20 +209,27 @@ function getRecentMovements(armouryId, limit = 20) {
     FROM equipment_transactions t
     JOIN equipment e ON t.equipmentId = e.id
     WHERE e.armouryId = ?
-    ORDER BY COALESCE(t.checkedInAt, t.checkedOutAt) DESC
+    ORDER BY CASE WHEN t.checkedInAt IS NOT NULL AND t.checkedInAt > t.checkedOutAt
+                  THEN t.checkedInAt ELSE t.checkedOutAt END DESC
     LIMIT ?
   `).all(armouryId, limit);
 
-  const local = localRows.map(r => ({
-    id: r.id,
-    action: r.checkedInAt ? 'check_in' : r.action,
-    timestamp: r.checkedInAt || r.checkedOutAt,
-    equipmentName: r.equipmentName,
-    equipmentCategory: r.equipmentCategory,
-    userFirstName: r.userFirstName,
-    userLastName: r.userLastName,
-    userQid: r.userQid,
-  }));
+  const local = [];
+  for (const r of localRows) {
+    const base = {
+      equipmentName: r.equipmentName,
+      equipmentCategory: r.equipmentCategory,
+      userFirstName: r.userFirstName,
+      userLastName: r.userLastName,
+      userQid: r.userQid,
+    };
+    if (r.checkedInAt) {
+      local.push({ ...base, id: `${r.id}_in`, action: 'check_in', timestamp: r.checkedInAt });
+    }
+    if (r.checkedOutAt) {
+      local.push({ ...base, id: `${r.id}_out`, action: 'check_out', timestamp: r.checkedOutAt });
+    }
+  }
 
   // Movements pulled from the server (other portals, back office, etc.)
   const cached = getDb().prepare(`
