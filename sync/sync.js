@@ -192,12 +192,14 @@ async function pushQueue() {
           userId: payload.userId,
           transactionId: payload.transactionId, // propagate local UUID
         });
-        if (res.ok || res.status === 409) db.markQueueItemSynced(item.id);
+        // Clear on success or any 4xx (client errors won't resolve with retries)
+        if (res.ok || (res.status >= 400 && res.status < 500)) db.markQueueItemSynced(item.id);
       } else if (item.type === 'checkin') {
         const res = await remotePost('/api/portal/checkin', {
           equipmentId: payload.equipmentId,
         });
-        if (res.ok || res.status === 409) db.markQueueItemSynced(item.id);
+        // Clear on success or any 4xx (client errors won't resolve with retries)
+        if (res.ok || (res.status >= 400 && res.status < 500)) db.markQueueItemSynced(item.id);
       }
     } catch (e) {
       if (e.message === 'AUTH_FAILED') break;
