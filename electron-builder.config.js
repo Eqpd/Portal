@@ -37,6 +37,7 @@ module.exports = {
     category: 'public.app-category.utilities',
     target: [
       { target: 'dmg', arch: ['x64', 'arm64'] },
+      { target: 'zip', arch: ['x64', 'arm64'] },
     ],
     identity: process.env.CSC_NAME || null,
     hardenedRuntime: true,
