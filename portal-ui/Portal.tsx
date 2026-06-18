@@ -155,9 +155,10 @@ export default function Portal() {
   type AppUpdateStatus =
     | { state: 'idle' }
     | { state: 'checking' }
+    | { state: 'current' }
     | { state: 'available'; version: string }
     | { state: 'downloading'; percent: number }
-    | { state: 'ready'; version: string }
+    | { state: 'ready'; version: string; manualInstall?: boolean }
     | { state: 'error'; message: string };
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus>({ state: 'idle' });
 
@@ -1004,12 +1005,18 @@ export default function Portal() {
       </div>
 
       {/* ── App update banner ── */}
-      {isElectron && (appUpdate.state === 'available' || appUpdate.state === 'downloading' || appUpdate.state === 'ready') && (
+      {isElectron && appUpdate.state !== 'idle' && appUpdate.state !== 'current' && (
         <div className={`flex items-center gap-3 px-4 py-2 flex-shrink-0 text-sm font-medium ${
-          appUpdate.state === 'ready'
-            ? 'bg-emerald-600 text-white'
-            : 'bg-indigo-600 text-white'
+          appUpdate.state === 'ready' ? 'bg-emerald-600 text-white'
+          : appUpdate.state === 'error' ? 'bg-red-600 text-white'
+          : 'bg-indigo-600 text-white'
         }`}>
+          {appUpdate.state === 'checking' && (
+            <>
+              <RefreshCw className="w-4 h-4 flex-shrink-0 animate-spin" />
+              <span>Checking for updates…</span>
+            </>
+          )}
           {appUpdate.state === 'available' && (
             <>
               <Download className="w-4 h-4 flex-shrink-0 animate-bounce" />
@@ -1031,13 +1038,32 @@ export default function Portal() {
           {appUpdate.state === 'ready' && (
             <>
               <CheckCircle className="w-4 h-4 flex-shrink-0" />
-              <span>Update v{(appUpdate as any).version} downloaded — restart to install</span>
+              <span>
+                {(appUpdate as any).manualInstall
+                  ? `Update v${(appUpdate as any).version} available`
+                  : `Update v${(appUpdate as any).version} downloaded — restart to install`}
+              </span>
               <button
                 onClick={() => (window as any).electronAPI?.installUpdate?.()}
                 className="ml-auto flex items-center gap-1.5 bg-white text-emerald-700 font-semibold text-xs px-3 py-1 rounded-full hover:bg-emerald-50 transition-colors"
               >
-                <RefreshCw className="w-3 h-3" />
-                Restart Now
+                {(appUpdate as any).manualInstall ? (
+                  <><Download className="w-3 h-3" />Download DMG</>
+                ) : (
+                  <><RefreshCw className="w-3 h-3" />Restart Now</>
+                )}
+              </button>
+            </>
+          )}
+          {appUpdate.state === 'error' && (
+            <>
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>Update check failed: {(appUpdate as any).message}</span>
+              <button
+                onClick={() => setAppUpdate({ state: 'idle' })}
+                className="ml-auto text-white/70 hover:text-white text-xs underline"
+              >
+                Dismiss
               </button>
             </>
           )}

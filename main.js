@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut, shell } = require('electron');
 const path = require('path');
 const net = require('net');
 const fs = require('fs');
@@ -78,8 +78,12 @@ function setupAutoUpdater() {
     autoUpdater.requestHeaders = { Authorization: `token ${ghToken}` };
   }
 
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // macOS: ShipIt (the Squirrel.Mac update installer) validates code signatures
+  // and rejects unsigned / ad-hoc-signed zips. Skip auto-download on macOS and
+  // redirect the user to the GitHub releases page to install the new DMG instead.
+  const isMac = process.platform === 'darwin';
+  autoUpdater.autoDownload = !isMac;
+  autoUpdater.autoInstallOnAppQuit = !isMac;
 
   autoUpdater.on('checking-for-update', () => {
     sendToRenderer('update-status', { state: 'checking' });
@@ -87,7 +91,13 @@ function setupAutoUpdater() {
 
   autoUpdater.on('update-available', (info) => {
     console.log(`[updater] Update available: v${info.version}`);
-    sendToRenderer('update-status', { state: 'available', version: info.version });
+    if (isMac) {
+      // On macOS, skip the download — go straight to "ready" with manualInstall flag
+      // so the UI shows a "Download" button that opens the releases page.
+      sendToRenderer('update-status', { state: 'ready', version: info.version, manualInstall: true });
+    } else {
+      sendToRenderer('update-status', { state: 'available', version: info.version });
+    }
   });
 
   autoUpdater.on('update-not-available', () => {
@@ -441,7 +451,12 @@ ipcMain.handle('rfid-simulate-tag', (_, tag) => {
 });
 
 ipcMain.handle('install-update', () => {
-  autoUpdater.quitAndInstall(false, true);
+  if (process.platform === 'darwin') {
+    // macOS: ShipIt can't install unsigned zips — open the releases page instead
+    shell.openExternal('https://github.com/Eqpd/Portal/releases/latest');
+  } else {
+    autoUpdater.quitAndInstall(false, true);
+  }
 });
 
 // Allow the renderer to push a server-managed PIN into the main process after
