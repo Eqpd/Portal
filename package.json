@@ -1,6 +1,6 @@
 {
   "name": "equip-portal-v2",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "description": "Equip Portal 2.0 \u2014 Offline-capable Electron desktop app",
   "main": "main.js",
   "scripts": {
