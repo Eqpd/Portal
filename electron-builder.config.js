@@ -1,27 +1,11 @@
 /**
  * electron-builder configuration
- *
- * Required environment variables for release builds:
- *
- *   macOS signing + notarization:
- *     CSC_NAME             — Developer ID Application cert name from Keychain
- *     APPLE_ID             — Apple ID email for the Developer account
- *     APPLE_ID_PASSWORD    — App-specific password (appleid.apple.com)
- *     APPLE_TEAM_ID        — 10-char team ID from developer.apple.com
- *
- *   Windows signing:
- *     WIN_CSC_LINK         — Path or URL to the .pfx certificate file
- *     WIN_CSC_KEY_PASSWORD — Password for the .pfx file
- *
- *   Publishing (GitHub Releases):
- *     GH_TOKEN             — GitHub personal access token (repo scope)
- *     GH_OWNER             — GitHub org/user that owns the release repo
- *     GH_REPO              — GitHub repo name for releases
  */
 
 module.exports = {
   appId: 'nz.equip.portal2',
   productName: 'Equip Portal',
+  icon: 'build/icon',
   directories: { output: 'dist' },
 
   publish: [
@@ -29,7 +13,7 @@ module.exports = {
       provider: 'github',
       owner: 'Eqpd',
       repo: 'Portal',
-      private: true,
+      private: false,
     },
   ],
 
@@ -46,9 +30,7 @@ module.exports = {
   },
 
   win: {
-    target: [
-      { target: 'nsis', arch: ['x64'] },
-    ],
+    target: [{ target: 'nsis', arch: ['x64'] }],
     certificateFile: process.env.WIN_CSC_LINK || null,
     certificatePassword: process.env.WIN_CSC_KEY_PASSWORD || null,
     signingHashAlgorithms: ['sha256'],
