@@ -2,10 +2,11 @@
 
 ## macOS without an Apple Developer certificate
 
-**Distribution hold:** version 1.0.19 was withdrawn after a macOS malware warning.
+**Distribution safeguards:** version 1.0.19 was withdrawn after a macOS malware warning.
 Its old build tool silently skipped the requested ad-hoc signature. New builds
-use a signing-capable builder and must pass strict signature verification, but
-remain drafts while the warning is investigated. A valid signature alone does
+use a signing-capable builder and must pass strict signature verification.
+The corrected build was confirmed to open and automatic publication has resumed.
+A valid signature alone does
 not establish that malware detection was a false positive. Do not override a
 malware warning. `PORTAL_RELEASE_HOLD=true` in the Portal repository keeps new
 builds out of public updates without stopping private source syncing.
