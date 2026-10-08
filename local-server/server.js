@@ -7,7 +7,7 @@ const uiCache = require('./ui-cache');
 let server = null;
 let assignedPort = null;
 
-async function start(config = {}, onUiUpdate) {
+async function start(config = {}, onUiUpdate, onOrganisationPaired, onUnpair) {
   // Initialise UI cache if we have a remote server to pull from
   if (config.remoteUiUpdates === true && config.apiBaseUrl && config.uiCacheDir) {
     uiCache.init({ dir: config.uiCacheDir, url: config.apiBaseUrl });
@@ -54,7 +54,7 @@ async function start(config = {}, onUiUpdate) {
   app.use(express.static(rendererPath));
 
   // Portal API routes — pass runtime config so routes can forward to remote
-  registerRoutes(app, { apiBaseUrl: config.apiBaseUrl || '' });
+  registerRoutes(app, { apiBaseUrl: config.apiBaseUrl || '', onOrganisationPaired, onUnpair });
 
   // SPA fallback — serve cached index.html when available, else bundled copy
   app.get(/^(?!\/api\/).*/, (req, res) => {

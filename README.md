@@ -28,6 +28,11 @@ fully trusted distribution will require Developer ID signing and notarisation la
 
 ## Automatic source sync, releases and installed updates
 
+- Standalone setup resolves a registered organisation URL before accepting the
+  pairing code. Selecting another organisation never reuses its cached token or
+  equipment; scope changes are blocked while offline transactions need syncing.
+- Unpaired setup exits without a PIN. Supervisor PIN protection starts only after
+  a paired session loads, never from a legacy PIN left in an installation config.
 - The Replit **GitHub source sync** workflow pushes completed `main` checkpoints
   to the private `Eqpd/Equip` repository. It runs while the workspace is running,
   retries failed pushes, and never force-pushes or commits unfinished file edits.

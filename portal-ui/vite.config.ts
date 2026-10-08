@@ -4,6 +4,7 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: { esbuildOptions: { target: 'chrome126' } },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),
@@ -11,6 +12,7 @@ export default defineConfig({
     },
   },
   build: {
+    target: 'chrome126',
     outDir: '../renderer',
     emptyOutDir: true,
   },

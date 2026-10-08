@@ -90,6 +90,7 @@ const playRemove   = () => { initSounds(); playSound(_removeUrl); };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface PortalAuth {
+  organizationDomain?: string;
   token: string;
   expiresAt: string;
   armoury: { id: string; name: string };
@@ -143,6 +144,10 @@ export default function Portal() {
   // ── Auth ────────────────────────────────────────────────────────────────────
   const [portalAuth, setPortalAuth] = useState<PortalAuth | null>(null);
   const [pairingCode, setPairingCode] = useState("");
+  const [organisationUrl, setOrganisationUrl] = useState("");
+  const [organisation, setOrganisation] = useState<{ name: string; organizationDomain: string } | null>(null);
+  const currentPortalToken = useRef("");
+  currentPortalToken.current = portalAuth?.token || "";
   const [pairingError, setPairingError] = useState("");
   const [isPairing, setIsPairing] = useState(false);
 
@@ -170,6 +175,11 @@ export default function Portal() {
   const [exitPinPending, setExitPinPending] = useState(false);
   const [hasSupervisorPin, setHasSupervisorPin] = useState(false);
   const exitPinInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const pin = portalAuth ? String((portalAuth.settings as any)?.supervisorPin || '') : '';
+    setHasSupervisorPin(!!pin);
+    (window as any).electronAPI?.setSupervisorPin?.(pin);
+  }, [portalAuth]);
 
   // Ref so IPC listener always calls the latest processTag without re-subscribing
   const processTagRef = useRef<((tag: string) => void) | null>(null);
@@ -330,7 +340,8 @@ export default function Portal() {
     if (saved) {
       try {
         const auth = JSON.parse(saved) as PortalAuth;
-        if (new Date(auth.expiresAt) > new Date()) { setPortalAuth(auth); return; }
+        if (auth.token && auth.armoury?.id && typeof auth.armoury.name === "string" &&
+            new Date(auth.expiresAt) > new Date()) { setPortalAuth(auth); return; }
         localStorage.removeItem(key);
       } catch { localStorage.removeItem(key); }
     }
@@ -338,6 +349,7 @@ export default function Portal() {
       if (!s) return;
       const offlineAuth: PortalAuth = {
         token: s.portalToken,
+        organizationDomain: s.organizationDomain,
         expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
         armoury: { id: s.armouryId, name: s.armouryName },
         settings: {},
@@ -392,7 +404,10 @@ export default function Portal() {
     if (!portalAuth) return;
     try {
       const res = await portalFetch("/api/portal/recent-movements");
-      if (res.ok) setRecentMovements(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        if (currentPortalToken.current === portalAuth.token && Array.isArray(data)) setRecentMovements(data);
+      }
     } catch {}
   }, [portalAuth, portalFetch]);
 
@@ -400,7 +415,10 @@ export default function Portal() {
     if (!portalAuth) return;
     try {
       const res = await portalFetch("/api/portal/available-counts");
-      if (res.ok) setAvailableCounts(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        if (currentPortalToken.current === portalAuth.token && Array.isArray(data)) setAvailableCounts(data);
+      }
     } catch {}
   }, [portalAuth, portalFetch]);
 
@@ -420,16 +438,30 @@ export default function Portal() {
 
   // ── Pairing ──────────────────────────────────────────────────────────────────
   const handlePairing = async () => {
+    if (!organisation) {
+      if (!organisationUrl.trim()) { setPairingError("Enter your organisation’s Equip site URL."); return; }
+      setIsPairing(true); setPairingError("");
+      try {
+        const res = await fetch(`/api/portal/organisation?domain=${encodeURIComponent(organisationUrl.trim())}`);
+        const data = await res.json();
+        if (!res.ok || !data.organizationDomain) throw new Error(data.message || "Organisation could not be found.");
+        setOrganisation(data);
+      } catch (error) { setPairingError(error instanceof Error ? error.message : "Could not connect to your organisation."); }
+      finally { setIsPairing(false); }
+      return;
+    }
     if (!pairingCode.trim()) { setPairingError("Please enter a portal code"); return; }
     setIsPairing(true); setPairingError("");
     try {
       const res = await fetch("/api/portal/pair", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ portalCode: pairingCode.trim().toUpperCase() }),
+        body: JSON.stringify({ portalCode: pairingCode.trim().toUpperCase(), organizationDomain: organisation.organizationDomain }),
       });
       if (!res.ok) { const e = await res.json(); setPairingError(e.message || "Invalid code"); return; }
       const auth = await res.json() as PortalAuth;
+      setRecentMovements([]);
+      setAvailableCounts([]);
       localStorage.setItem("portalAuth2", JSON.stringify(auth));
       setPortalAuth(auth);
       // Push the server-managed supervisor PIN into the Electron main process so
@@ -445,6 +477,7 @@ export default function Portal() {
         stationName: "",
         portalToken: auth.token,
         portalCode: pairingCode.trim().toUpperCase(),
+        organizationDomain: organisation.organizationDomain,
         lastSynced: Date.now(),
       });
       setPairingCode("");
@@ -453,9 +486,19 @@ export default function Portal() {
   };
 
   const handleUnpair = async () => {
+    const response = await portalFetch("/api/portal/unpair", { method: "POST" });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      setIdleError(error.message || "Could not disconnect the portal. Please try again.");
+      return;
+    }
     localStorage.removeItem("portalAuth2");
     setPortalAuth(null);
+    setRecentMovements([]);
+    setAvailableCounts([]);
     await clearPortalSession();
+    setOrganisation(null);
+    setOrganisationUrl("");
     resetToIdle();
   };
 
@@ -688,13 +731,13 @@ export default function Portal() {
   };
 
   // ── Supervisor exit ──────────────────────────────────────────────────────────
-  const handleExitConfirm = async () => {
+  const handleExitConfirm = async (pin = exitPin) => {
     const eApi = (window as any).electronAPI;
-    if (!eApi?.confirmExit) return;
+    if (!eApi?.confirmExit) { setExitPinError("The desktop exit connection is unavailable. Try closing the app window."); return; }
     setExitPinPending(true);
     setExitPinError("");
     try {
-      const result = await eApi.confirmExit(exitPin);
+      const result = await eApi.confirmExit(pin);
       if (!result.success) {
         setExitPinError(result.error || "Incorrect PIN. Please try again.");
         setExitPin("");
@@ -832,7 +875,7 @@ export default function Portal() {
                   </>
                 )}
                 <button
-                  onClick={handleExitConfirm}
+                  onClick={() => void handleExitConfirm()}
                   disabled={exitPinPending || (hasSupervisorPin && !exitPin)}
                   className="w-full bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-semibold rounded-lg py-3 transition-colors"
                 >
@@ -854,9 +897,23 @@ export default function Portal() {
           <div className="text-center mb-8">
             <div className="flex justify-center mb-4"><EquipLogo size="lg" /></div>
             <h1 className="text-2xl font-bold text-slate-900">Portal 2.0 Setup</h1>
-            <p className="text-slate-600 mt-2">Enter the portal code from your armoury settings to connect this device.</p>
+            <p className="text-slate-600 mt-2">{organisation
+              ? "Enter the portal code from your armoury settings to connect this device."
+              : "First, enter your organisation’s Equip site URL so we connect to the correct organisation."}</p>
           </div>
           <div className="space-y-4">
+            {!organisation ? <div>
+              <Label htmlFor="p2-org">Organisation Equip URL</Label>
+              <Input id="p2-org" value={organisationUrl} onChange={e => setOrganisationUrl(e.target.value)}
+                placeholder="equip.example.org" className="mt-1" onKeyDown={e => e.key === "Enter" && handlePairing()} />
+            </div> : <>
+            <div className="text-center text-sm text-slate-600">
+              <div className="font-semibold">{organisation.name}</div>
+              <div>{organisation.organizationDomain}</div>
+              <button className="underline mt-2" onClick={() => {
+                setOrganisation(null); setPairingCode(""); setPairingError("");
+              }}>Change organisation</button>
+            </div>
             <div>
               <Label htmlFor="p2-code">Portal Code</Label>
               <Input
@@ -869,6 +926,7 @@ export default function Portal() {
                 onKeyDown={(e) => e.key === "Enter" && handlePairing()}
               />
             </div>
+            </>}
             {pairingError && (
               <div className="flex items-center gap-2 text-red-600 text-sm">
                 <AlertCircle className="h-4 w-4" /><span>{pairingError}</span>
@@ -876,7 +934,7 @@ export default function Portal() {
             )}
             <Button onClick={handlePairing} disabled={isPairing} className="w-full">
               <Link2 className="h-4 w-4 mr-2" />
-              {isPairing ? "Connecting…" : "Connect Portal"}
+              {isPairing ? "Connecting…" : organisation ? "Connect Portal" : "Continue"}
             </Button>
             {isElectron && (
               <Button variant="outline" onClick={() => setShowSettings(true)} className="w-full">
@@ -885,15 +943,12 @@ export default function Portal() {
               </Button>
             )}
             {isElectron && (
-              <Button variant="outline" onClick={() => {
-                setShowExitDialog(true);
-                setExitPin("");
-                setExitPinError("");
-              }} className="w-full text-slate-500">
+              <Button variant="outline" disabled={exitPinPending} onClick={() => void handleExitConfirm("")} className="w-full text-slate-500">
                 <XCircle className="h-4 w-4 mr-2" />
-                Exit Application
+                {exitPinPending ? "Closing…" : "Exit Application"}
               </Button>
             )}
+            {exitPinError && <p role="alert" className="text-sm text-red-600">{exitPinError}</p>}
           </div>
           <p className="text-xs text-slate-500 text-center mt-6">
             Portal codes are configured in the back office under Locations › Armoury Settings.
@@ -950,7 +1005,7 @@ export default function Portal() {
                 </>
               )}
               <button
-                onClick={handleExitConfirm}
+                  onClick={() => void handleExitConfirm()}
                 disabled={exitPinPending || (hasSupervisorPin && !exitPin)}
                 className="w-full bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-semibold rounded-lg py-3 transition-colors"
               >

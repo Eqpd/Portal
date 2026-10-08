@@ -10,6 +10,17 @@ let syncStatusCallback = null;
 
 let networkCheckTimer = null;
 let syncTimer = null;
+let sessionGeneration = 0;
+let syncInFlight = false;
+
+function configureSession(base) {
+  sessionGeneration++;
+  apiBaseUrl = base;
+  remoteToken = db.getConfig('token');
+  pairingCode = db.getConfig('pairingCode');
+  armouryId = db.getConfig('armouryId');
+  isOnline = false;
+}
 
 function init(config, onStatus) {
   apiBaseUrl = config.apiBaseUrl;
@@ -64,29 +75,33 @@ function startSyncLoop() {
 }
 
 async function runSync() {
-  if (!apiBaseUrl) return;
-
-  if (!remoteToken) {
-    await doReauth();
-  }
-
-  await Promise.allSettled([pushQueue(), pullData()]);
-  db.setConfig('lastSyncAt', new Date().toISOString());
-  emitStatus();
+  if (!apiBaseUrl || syncInFlight || (!remoteToken && !pairingCode)) return;
+  syncInFlight = true;
+  const generation = sessionGeneration;
+  try {
+    if (!remoteToken && !await doReauth()) return;
+    await Promise.allSettled([pushQueue(), pullData()]);
+    if (generation === sessionGeneration) {
+      db.setConfig('lastSyncAt', new Date().toISOString());
+      emitStatus();
+    }
+  } finally { syncInFlight = false; }
 }
 
 async function doReauth() {
+  const generation = sessionGeneration;
   const code = pairingCode || db.getConfig('pairingCode');
   if (!code || !apiBaseUrl) return false;
   try {
     const res = await fetch(`${apiBaseUrl}/api/portal/pair`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ portalCode: code }),
+      body: JSON.stringify({ portalCode: code, organizationDomain: db.getConfig('organizationDomain') || undefined }),
       signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return false;
     const data = await res.json();
+    if (generation !== sessionGeneration) return false;
     if (data.token) {
       remoteToken = data.token;
       db.setConfig('token', data.token);
@@ -137,12 +152,14 @@ async function remotePost(path, body) {
 
 async function pullData() {
   if (!armouryId || !apiBaseUrl) return;
+  const generation = sessionGeneration;
   try {
     const [equipmentList, userList] = await Promise.all([
       remoteGet('/api/portal/equipment'),
       remoteGet('/api/portal/users'),
     ]);
 
+    if (generation !== sessionGeneration) return;
     // Upsert equipment
     if (Array.isArray(equipmentList)) {
       for (const eq of equipmentList) {
@@ -170,6 +187,7 @@ async function pullData() {
   // transactions done on other portals or from the back office.
   try {
     const movements = await remoteGet('/api/portal/recent-movements');
+    if (generation !== sessionGeneration) return;
     if (Array.isArray(movements)) {
       for (const m of movements) db.upsertCachedMovement(m);
     }
@@ -220,4 +238,4 @@ function getStatus() {
   };
 }
 
-module.exports = { init, stop, runSync, getStatus, doReauth };
+module.exports = { init, stop, runSync, getStatus, doReauth, configureSession };

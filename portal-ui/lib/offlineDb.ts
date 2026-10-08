@@ -8,6 +8,7 @@ interface PortalSession {
   stationName: string;
   portalToken: string;
   portalCode?: string;
+  organizationDomain?: string;
   lastSynced: number;
 }
 

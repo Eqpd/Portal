@@ -134,6 +134,10 @@ function setupAutoUpdater() {
 app.whenReady().then(async () => {
   // Load config now that app is ready and getPath('userData') is available
   config = loadConfig();
+  // A legacy persisted PIN must not lock an unpaired setup screen. The
+  // renderer restores the PIN only from its paired organisation's settings.
+  config.supervisorPin = '';
+  saveConfigToDisk(config);
 
   // Start local server — pass userData cache dir so it can fetch/cache the
   // latest UI from the deployed Replit server and serve it offline.
@@ -143,6 +147,12 @@ app.whenReady().then(async () => {
     // A new UI version was downloaded — notify the renderer so it can reload
     // when the portal is next idle (handled in Portal.tsx).
     sendToRenderer('ui-updated', {});
+  }, (base) => {
+    config.apiBaseUrl = base;
+    saveConfigToDisk(config);
+    sync?.configureSession(base);
+  }, () => {
+    sync?.configureSession(config.apiBaseUrl);
   });
 
   // Init sync engine
@@ -185,7 +195,7 @@ function createWindow() {
     width,
     height,
     fullscreen: kioskMode,
-    frame: isDev,
+    frame: isDev || !kioskMode,
     kiosk: kioskMode,
     backgroundColor: '#f8fafc',
     webPreferences: {
@@ -243,13 +253,13 @@ function createWindow() {
     sendToRenderer('request-exit', {});
   });
 
-  if (kioskMode) {
+  {
     // ── Close / quit interception ──────────────────────────────────────────────
     // Catches: window X button, OS close signal, Alt+F4 (Windows), Cmd+Q (macOS).
     // supervisorExitAllowed is set by confirm-exit IPC before app.quit() is called
     // so the normal Electron quit lifecycle (before-quit → cleanup → closed) runs.
     mainWindow.on('close', (e) => {
-      if (supervisorExitAllowed) return; // supervisor has authenticated — let through
+      if (!kioskMode || supervisorExitAllowed) return;
       e.preventDefault();
       sendToRenderer('request-exit', {});
     });
@@ -264,7 +274,7 @@ function createWindow() {
     // Note: for full suppression of OS-reserved combos (Win+L, Ctrl+Alt+Delete)
     // configure Windows Keyboard Filter via Group Policy or Intune.
     mainWindow.on('blur', () => {
-      if (supervisorExitAllowed) return; // don't re-focus during graceful exit
+      if (!kioskMode || supervisorExitAllowed) return;
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.focus();
       }
@@ -546,7 +556,13 @@ ipcMain.handle('restart-app', () => {
 ipcMain.on('set-supervisor-pin', (_, pin) => {
   if (config) {
     config.supervisorPin = pin ? String(pin) : '';
+    supervisorExitAllowed = false;
     kioskMode = !isDev && !!config.supervisorPin;
+    mainWindow?.setKiosk(kioskMode);
+    mainWindow?.setAlwaysOnTop(kioskMode, 'screen-saver');
+    if (process.platform === 'darwin') mainWindow?.setWindowButtonVisibility(!kioskMode);
+    globalShortcut.unregisterAll();
+    if (kioskMode) registerKioskShortcuts();
     console.log('[kiosk] Supervisor PIN updated from server settings, kioskMode:', kioskMode);
   }
 });

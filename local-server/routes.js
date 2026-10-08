@@ -16,53 +16,25 @@ function portalAuth(req, res, next) {
   next();
 }
 
-module.exports = function registerRoutes(app, { apiBaseUrl = '' } = {}) {
+module.exports = function registerRoutes(app, { apiBaseUrl = '', onOrganisationPaired, onUnpair } = {}) {
 
   // ── POST /api/portal/pair ─────────────────────────────────────────────────
-  app.post('/api/portal/pair', async (req, res) => {
-    const { portalCode } = req.body || {};
-    if (!portalCode) return res.status(400).json({ message: 'portalCode required' });
-
-    // Try remote first
-    if (apiBaseUrl) {
-      try {
-        const remote = await fetch(`${apiBaseUrl}/api/portal/pair`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ portalCode }),
-          signal: AbortSignal.timeout(8000),
-        });
-        if (remote.ok) {
-          const data = await remote.json();
-          db.setConfig('token', data.token);
-          db.setConfig('armouryId', data.armoury?.id || '');
-          db.setConfig('armouryName', data.armoury?.name || '');
-          db.setConfig('pairingCode', portalCode);
-          return res.json(data);
-        }
-        const err = await remote.json().catch(() => ({}));
-        return res.status(remote.status).json(err);
-      } catch {
-        // Fall through to offline cached config
-      }
-    }
-
-    // Offline fallback
-    const cachedCode = db.getConfig('pairingCode');
-    const cachedToken = db.getConfig('token');
-    const cachedArmouryId = db.getConfig('armouryId');
-    const cachedArmouryName = db.getConfig('armouryName');
-
-    if (cachedCode && cachedToken && portalCode.toUpperCase() === cachedCode.toUpperCase()) {
-      return res.json({
-        token: cachedToken,
-        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-        armoury: { id: cachedArmouryId, name: cachedArmouryName },
-        settings: {},
-      });
-    }
-
-    res.status(503).json({ message: 'Cannot connect to server and no cached session available.' });
+  const pairing = require('./organisation-pairing').createOrganisationPairing({
+    database: db, getApiBaseUrl: () => apiBaseUrl,
+    onPaired: (base, domain) => {
+      apiBaseUrl = base;
+      onOrganisationPaired?.(base, domain);
+    },
+  });
+  app.get('/api/portal/organisation', pairing.organisation);
+  app.post('/api/portal/pair', pairing.pair);
+  app.post('/api/portal/unpair', portalAuth, (_req, res) => {
+    if (db.getPendingCount() > 0) return res.status(409).json({ message: 'Sync pending offline transactions before disconnecting.' });
+    db.setConfig('token', '');
+    db.setConfig('pairingCode', '');
+    db.setConfig('settings', '');
+    onUnpair?.();
+    res.json({ success: true });
   });
 
   // ── GET /api/portal/recent-movements ─────────────────────────────────────
