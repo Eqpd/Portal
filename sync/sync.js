@@ -79,13 +79,29 @@ async function runSync() {
   syncInFlight = true;
   const generation = sessionGeneration;
   try {
-    if (!remoteToken && !await doReauth()) return;
-    await Promise.allSettled([pushQueue(), pullData()]);
+    if (!remoteToken && !await doReauth()) throw new Error('Portal authentication failed. Reconnect the portal to sync.');
+    const results = await Promise.allSettled([pushQueue(), pullData()]);
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
     if (generation === sessionGeneration) {
       db.setConfig('lastSyncAt', new Date().toISOString());
       emitStatus();
     }
   } finally { syncInFlight = false; }
+}
+
+async function syncNow() {
+  if (!remoteToken && !pairingCode) throw new Error('Pair the portal before syncing.');
+  if (syncInFlight) throw new Error('A sync is already running. Please try again shortly.');
+  const generation = sessionGeneration;
+  const online = await ping();
+  if (generation !== sessionGeneration) throw new Error('The portal connection changed. Please try again.');
+  isOnline = online;
+  emitStatus();
+  if (!online) throw new Error('The organisation site is offline or unreachable. Pending updates remain saved.');
+  await runSync();
+  if (generation !== sessionGeneration) throw new Error('The portal connection changed. Please try again.');
+  return getStatus();
 }
 
 async function doReauth() {
@@ -151,6 +167,7 @@ async function remotePost(path, body) {
 }
 
 async function pullData() {
+  const errors = [];
   if (!armouryId || !apiBaseUrl) return;
   const generation = sessionGeneration;
   try {
@@ -180,6 +197,7 @@ async function pullData() {
       for (const u of userList) db.upsertUser(u);
     }
   } catch (e) {
+    errors.push(e);
     if (e.message !== 'AUTH_FAILED') console.error('[sync] pull error:', e.message);
   }
 
@@ -192,8 +210,10 @@ async function pullData() {
       for (const m of movements) db.upsertCachedMovement(m);
     }
   } catch (e) {
+    errors.push(e);
     if (e.message !== 'AUTH_FAILED') console.error('[sync] pull movements error:', e.message);
   }
+  if (errors.length) throw new Error('Could not refresh portal data. Please check the connection and try again.');
 }
 
 async function pushQueue() {
@@ -238,4 +258,4 @@ function getStatus() {
   };
 }
 
-module.exports = { init, stop, runSync, getStatus, doReauth, configureSession };
+module.exports = { init, stop, runSync, syncNow, getStatus, doReauth, configureSession };

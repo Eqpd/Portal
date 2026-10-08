@@ -194,7 +194,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width,
     height,
-    fullscreen: kioskMode,
+    fullscreen: !isDev,
     frame: isDev || !kioskMode,
     kiosk: kioskMode,
     backgroundColor: '#f8fafc',
@@ -207,6 +207,10 @@ function createWindow() {
 
   // Belt-and-suspenders: maximise z-order so other windows cannot overlay the portal
   if (kioskMode) mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  // Fullscreen presentation is independent of PIN-based kiosk protection.
+  mainWindow.on('leave-full-screen', () => {
+    if (!isDev && !supervisorExitAllowed && mainWindow && !mainWindow.isDestroyed()) mainWindow.setFullScreen(true);
+  });
 
   mainWindow.loadURL(`http://127.0.0.1:${serverPort}/`);
 
@@ -557,13 +561,24 @@ ipcMain.on('set-supervisor-pin', (_, pin) => {
   if (config) {
     config.supervisorPin = pin ? String(pin) : '';
     supervisorExitAllowed = false;
-    kioskMode = !isDev && !!config.supervisorPin;
-    mainWindow?.setKiosk(kioskMode);
+    const nextKioskMode = !isDev && !!config.supervisorPin;
+    if (nextKioskMode !== kioskMode) mainWindow?.setKiosk(nextKioskMode);
+    kioskMode = nextKioskMode;
     mainWindow?.setAlwaysOnTop(kioskMode, 'screen-saver');
     if (process.platform === 'darwin') mainWindow?.setWindowButtonVisibility(!kioskMode);
     globalShortcut.unregisterAll();
     if (kioskMode) registerKioskShortcuts();
     console.log('[kiosk] Supervisor PIN updated from server settings, kioskMode:', kioskMode);
+  }
+});
+
+ipcMain.handle('sync-now', async () => {
+  try {
+    if (!sync) throw new Error('Sync is not ready yet. Please try again.');
+    const status = await sync.syncNow();
+    return { success: true, ...status };
+  } catch (error) {
+    return { success: false, error: error.message || 'Unable to sync. Please try again.' };
   }
 });
 

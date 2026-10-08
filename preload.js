@@ -14,6 +14,7 @@ window.addEventListener('beforeunload', (e) => {
 contextBridge.exposeInMainWorld('electronAPI', {
   getConfig: () => ipcRenderer.invoke('get-config'),
   saveConfig: (config) => ipcRenderer.invoke('save-config', config),
+  syncNow: () => ipcRenderer.invoke('sync-now'),
 
   onRfidTag: (cb) => {
     ipcRenderer.on('rfid-tag', (_, data) => cb(data));

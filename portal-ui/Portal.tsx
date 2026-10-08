@@ -154,6 +154,29 @@ export default function Portal() {
   // ── Electron-specific state ──────────────────────────────────────────────────
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ online: false, pendingCount: 0, lastSyncAt: null });
   const [showSettings, setShowSettings] = useState(false);
+  const [syncPending, setSyncPending] = useState(false);
+  const [syncError, setSyncError] = useState("");
+  const handleSyncNow = async () => {
+    if (syncPending) return;
+    setSyncPending(true);
+    setSyncError("");
+    try {
+      const eApi = (window as any).electronAPI;
+      if (!eApi?.syncNow) throw new Error("The desktop sync connection is unavailable.");
+      const result = await eApi.syncNow();
+      if (!result.success) throw new Error(result.error || "Could not sync.");
+      setSyncStatus({ online: result.online, pendingCount: result.pendingCount, lastSyncAt: result.lastSyncAt });
+      await Promise.all([fetchRecentMovements(), fetchAvailableCounts()]);
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : "Could not sync. Please try again.");
+    } finally { setSyncPending(false); }
+  };
+  const requestPortalExit = () => {
+    setShowSettings(false);
+    setExitPin("");
+    setExitPinError("");
+    setShowExitDialog(true);
+  };
   const [electronInputMode, setElectronInputMode] = useState<'keyboard' | 'tcp' | 'serial'>('keyboard');
   const [uiUpdatePending, setUiUpdatePending] = useState(false);
 
@@ -490,9 +513,10 @@ export default function Portal() {
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       setIdleError(error.message || "Could not disconnect the portal. Please try again.");
-      return;
+      return false;
     }
     localStorage.removeItem("portalAuth2");
+    setShowSettings(false);
     setPortalAuth(null);
     setRecentMovements([]);
     setAvailableCounts([]);
@@ -500,6 +524,7 @@ export default function Portal() {
     setOrganisation(null);
     setOrganisationUrl("");
     resetToIdle();
+    return true;
   };
 
   // ── Scan a tag ───────────────────────────────────────────────────────────────
@@ -834,7 +859,7 @@ export default function Portal() {
   if (!portalAuth) {
     return (
       <div className="h-screen w-screen bg-slate-100 flex items-center justify-center">
-        {showSettings && <RfidInputSelector onClose={() => setShowSettings(false)} />}
+        {showSettings && <RfidInputSelector onClose={() => setShowSettings(false)} onExit={requestPortalExit} />}
 
         {/* Exit overlay — accessible before pairing so operators can close the app */}
         {showExitDialog && (
@@ -896,7 +921,7 @@ export default function Portal() {
         <Card className="w-full max-w-md p-8 mx-4">
           <div className="text-center mb-8">
             <div className="flex justify-center mb-4"><EquipLogo size="lg" /></div>
-            <h1 className="text-2xl font-bold text-slate-900">Portal 2.0 Setup</h1>
+            <h1 className="text-2xl font-bold text-slate-900">Portal Setup</h1>
             <p className="text-slate-600 mt-2">{organisation
               ? "Enter the portal code from your armoury settings to connect this device."
               : "First, enter your organisation’s Equip site URL so we connect to the correct organisation."}</p>
@@ -964,7 +989,7 @@ export default function Portal() {
 
   return (
     <div className={`portal2 h-screen w-screen overflow-hidden ${bgColor} flex flex-col transition-colors duration-300`}>
-      {showSettings && <RfidInputSelector onClose={() => setShowSettings(false)} />}
+      {showSettings && <RfidInputSelector onClose={() => setShowSettings(false)} onExit={requestPortalExit} onUnpair={handleUnpair} />}
 
       {/* ── Supervisor exit overlay ── */}
       {showExitDialog && (
@@ -1027,7 +1052,6 @@ export default function Portal() {
       <div className="flex items-center justify-between px-4 py-2 flex-shrink-0">
         <div className="flex items-center space-x-2">
           <EquipLogo size="sm" />
-          <span className="text-xs font-semibold px-2 py-0.5 rounded bg-indigo-100 text-indigo-700">2.0</span>
         </div>
 
         <div className="text-center">
@@ -1050,6 +1074,11 @@ export default function Portal() {
                   <span>Synced {timeAgo(syncStatus.lastSyncAt)}</span>
                 </div>
               )}
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" disabled={syncPending} onClick={() => void handleSyncNow()}>
+                <RefreshCw className={`w-3 h-3 mr-1 ${syncPending ? "animate-spin" : ""}`} />
+                {syncPending ? "Syncing…" : "Sync now"}
+              </Button>
+              {syncError && <p role="alert" className="text-xs text-red-600 max-w-60">{syncError}</p>}
               {/* Show when a new UI version is ready but we're mid-transaction */}
               {uiUpdatePending && phase !== 'idle' && (
                 <div className="flex items-center gap-0.5 text-[10px] text-indigo-500 font-medium mt-0.5">
@@ -1063,11 +1092,8 @@ export default function Portal() {
           <div className="text-right">
             <div className="text-sm font-semibold text-slate-700">{portalAuth.armoury.name}</div>
             <div className="flex items-center gap-1 justify-end">
-              <Button variant="ghost" size="sm" onClick={handleUnpair} className="text-xs h-6 px-2">
-                <Link2Off className="h-3 w-3 mr-1" />Unpair
-              </Button>
               {isElectron && (
-                <Button variant="ghost" size="sm" onClick={() => setShowSettings(true)} className="text-xs h-6 px-2">
+                <Button variant="ghost" size="sm" aria-label="Portal settings" onClick={() => setShowSettings(true)} className="text-xs h-6 px-2">
                   <Settings className="h-3 w-3" />
                 </Button>
               )}

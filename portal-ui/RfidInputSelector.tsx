@@ -3,15 +3,30 @@ import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { Label } from './components/ui/label';
 import { Card } from './components/ui/card';
-import { X, Keyboard, Wifi, Cable, Save, RotateCcw } from 'lucide-react';
+import { X, Keyboard, Wifi, Cable, Save, RotateCcw, Link2Off, LogOut } from 'lucide-react';
 
 type InputMode = 'keyboard' | 'tcp' | 'serial';
 
 interface Props {
   onClose: () => void;
+  onExit?: () => void;
+  onUnpair?: () => Promise<boolean>;
 }
 
-export default function RfidInputSelector({ onClose }: Props) {
+export default function RfidInputSelector({ onClose, onExit, onUnpair }: Props) {
+  const [confirmUnpair, setConfirmUnpair] = useState(false);
+  const [unpairing, setUnpairing] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const disconnect = async () => {
+    if (!onUnpair || unpairing) return;
+    setUnpairing(true);
+    setActionError('');
+    try {
+      if (!await onUnpair()) setActionError('Could not unpair. Sync pending updates first, then try again.');
+    } catch {
+      setActionError('Could not unpair. Check the connection and try again.');
+    } finally { setUnpairing(false); }
+  };
   const [mode, setMode] = useState<InputMode>('keyboard');
   const [tcpHost, setTcpHost] = useState('192.168.1.100');
   const [tcpPort, setTcpPort] = useState('6000');
@@ -58,10 +73,10 @@ export default function RfidInputSelector({ onClose }: Props) {
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6">
       <Card className="w-full max-w-lg bg-white shadow-2xl">
-        <div className="p-6">
+        <div className="p-6 max-h-[90vh] overflow-y-auto">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-bold text-slate-900">RFID Input Settings</h2>
-            <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 text-slate-500">
+            <h2 className="text-xl font-bold text-slate-900">Portal Settings</h2>
+            <button onClick={onClose} aria-label="Close settings" className="p-1 rounded hover:bg-slate-100 text-slate-500">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -149,6 +164,26 @@ export default function RfidInputSelector({ onClose }: Props) {
                 </Button>
                 <Button variant="outline" onClick={onClose}>Close</Button>
               </div>
+
+              {(onExit || onUnpair) && (
+                <div className="mt-6 pt-4 border-t border-slate-200 space-y-3">
+                  <h3 className="text-sm font-semibold text-slate-700">Portal controls</h3>
+                  {onExit && <Button variant="outline" onClick={onExit} disabled={unpairing} className="w-full justify-start">
+                    <LogOut className="w-4 h-4 mr-2" />Exit Application
+                  </Button>}
+                  {onUnpair && !confirmUnpair && <Button variant="outline" onClick={() => setConfirmUnpair(true)} className="w-full justify-start text-red-600">
+                    <Link2Off className="w-4 h-4 mr-2" />Unpair Portal
+                  </Button>}
+                  {onUnpair && confirmUnpair && <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-3">
+                    <p className="text-sm text-slate-700">Disconnect this portal from the organisation? You will need to pair again. Pending offline updates must be synced first.</p>
+                    <div className="flex gap-2">
+                      <Button variant="destructive" onClick={() => void disconnect()} disabled={unpairing}>{unpairing ? 'Unpairing…' : 'Confirm Unpair'}</Button>
+                      <Button variant="outline" onClick={() => { setConfirmUnpair(false); setActionError(''); }} disabled={unpairing}>Cancel</Button>
+                    </div>
+                  </div>}
+                  {actionError && <p role="alert" className="text-sm text-red-600">{actionError}</p>}
+                </div>
+              )}
 
               {appVersion && (
                 <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
