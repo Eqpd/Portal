@@ -1,12 +1,66 @@
 name: Build and Publish
-
 on:
   push:
-    tags:
-      - 'v*.*.*'
-
+    branches: [main]
+    paths:
+      - "main.js"
+      - "preload.js"
+      - "unsigned-mac-updater.js"
+      - "electron-builder.config.js"
+      - "package.json"
+      - "config.json"
+      - "portal-ui/**"
+      - "local-server/**"
+      - "sync/**"
+      - "build/**"
+      - "test/**"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: portal-release
+  cancel-in-progress: false
 jobs:
+  prepare:
+    # This template also lives in Equip; only the public Portal repository builds it.
+    if: github.repository == 'Eqpd/Portal'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release_id: ${{ steps.version.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test update policy before creating a release
+        run: node --test test/*.test.js
+      - name: Allocate a newer version and create a draft release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > /tmp/releases.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const pkg = require('./package.json');
+          const versions = [pkg.version, ...JSON.parse(fs.readFileSync('/tmp/releases.json')).map(r => r.tag_name.replace(/^v/, ''))];
+          const valid = versions.filter(v => /^\d+\.\d+\.\d+$/.test(v)).sort((a,b) => {
+            const x=a.split('.').map(Number), y=b.split('.').map(Number);
+            return x[0]-y[0] || x[1]-y[1] || x[2]-y[2];
+          });
+          const [major, minor, patch] = valid.at(-1).split('.').map(Number);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${major}.${minor}.${patch+1}\n`);
+          NODE
+          VERSION=$(grep '^version=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)
+          ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" --method POST \
+            -f tag_name="v$VERSION" -f target_commitish="$GITHUB_SHA" \
+            -f name="Equip Portal $VERSION" -F draft=true \
+            -f body="Unsigned desktop release. On macOS, copy the app to Applications and approve it once under Privacy & Security → Open Anyway. No Apple Developer certificate is used. Built from commit $GITHUB_SHA." --jq .id)
+          echo "release_id=$ID" >> "$GITHUB_OUTPUT"
   build:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -15,37 +69,29 @@ jobs:
             platform: mac
           - os: windows-latest
             platform: win
-
     runs-on: ${{ matrix.os }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Install dependencies
+          node-version: "22"
+      - name: Set release version
+        run: npm version "${{ needs.prepare.outputs.version }}" --no-git-tag-version
+      - name: Install native dependencies
         run: npm install
-
-      - name: Rebuild native modules for Electron
-        run: npx electron-rebuild -f -w better-sqlite3,serialport
-
-      - name: Inject download token into config
-        shell: bash
+      - name: Build and upload to draft release
         env:
-          ELECTRON_GITHUB_TOKEN: ${{ secrets.ELECTRON_GITHUB_TOKEN }}
-        run: |
-          node -e "
-            const fs = require('fs');
-            const cfg = JSON.parse(fs.readFileSync('config.json', 'utf8'));
-            cfg.githubToken = process.env.ELECTRON_GITHUB_TOKEN;
-            fs.writeFileSync('config.json', JSON.stringify(cfg, null, 2));
-          "
-
-      - name: Build and publish
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          GH_OWNER: Eqpd
+          GH_REPO: Portal
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npm run build:${{ matrix.platform }} -- --publish always
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish only after macOS and Windows both succeed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+        run: gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --method PATCH -F draft=false

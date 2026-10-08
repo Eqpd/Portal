@@ -2,13 +2,11 @@ const db = require('./db');
 const { v4: uuidv4 } = require('uuid');
 
 // ── Local auth middleware ───────────────────────────────────────────────────
-// This server only listens on 127.0.0.1 so we just require a non-empty token
-// (prevents unauthenticated requests) and that the portal has been paired.
-// We don't do strict token equality because the sync engine can legitimately
-// refresh the remote token while the UI still holds an older one from localStorage.
+// Requires a valid token that matches the stored token exactly.
 function portalAuth(req, res, next) {
   const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  if (!token) {
+  const storedToken = db.getConfig('token');
+  if (!token || token !== storedToken) {
     return res.status(401).json({ message: 'Unauthorized' });
   }
   req.armouryId = db.getConfig('armouryId');

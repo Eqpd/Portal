@@ -1,5 +1,48 @@
 # Equip Portal 2.0 — Desktop App
 
+## macOS without an Apple Developer certificate
+
+The current installers are **ad-hoc signed, not Developer ID signed or notarised**.
+They are intended for trusted testing. Ad-hoc signing supports Apple Silicon
+without requiring an Apple Developer account; it does not remove Gatekeeper warnings.
+
+1. Download the correct DMG from https://github.com/Eqpd/Portal/releases/latest
+   (`arm64` for Apple Silicon, the other Mac download for Intel).
+2. Copy **Equip Portal.app** into **Applications** and eject the DMG.
+3. Try opening the app. If macOS blocks it, use **System Settings → Privacy &
+   Security → Open Anyway**, then confirm **Open**.
+4. Approve only the app downloaded from the trusted Equip release repository.
+   Do not disable Gatekeeper globally, bypass TLS checks, or override a malware warning.
+
+Apple's instructions: https://support.apple.com/en-us/102445. Managed Macs may
+require their administrator's approval. Unsigned updates may need approval again;
+fully trusted distribution will require Developer ID signing and notarisation later.
+
+## Automatic source sync, releases and installed updates
+
+- The Replit **GitHub source sync** workflow pushes completed `main` checkpoints
+  to the private `Eqpd/Equip` repository. It runs while the workspace is running,
+  retries failed pushes, and never force-pushes or commits unfinished file edits.
+- Equip's **Sync desktop source to Portal** GitHub Action exports only this desktop
+  package to public `Eqpd/Portal`. The full Equip project is never made public.
+  The export strips credentials, pairing codes, PINs and hardware-specific settings.
+  Its `PORTAL_REPOSITORY_TOKEN` GitHub secret requires write access to Portal,
+  including permission to update its workflow.
+- Portal's **Build and Publish** action tests changes, allocates a newer version,
+  builds Intel/Apple Silicon Mac and Windows installers, then publishes only after
+  both operating-system jobs succeed. Failed builds remain draft releases.
+- Installed apps check public GitHub releases at launch and every four hours.
+  Mac downloads are HTTPS-only and SHA-256 verified against GitHub's asset digest.
+  Click **Install now** while the portal is idle to apply an update. The previous
+  app is retained in a hidden `.equip-portal-update-*` sibling directory for recovery.
+  Windows retains electron-updater's SHA-512 verification.
+- The bundled portal UI travels with each desktop release. Remote web UI caching
+  is disabled by default to avoid an old server cache overriding a newer desktop UI.
+  Only explicitly enable `remoteUiUpdates` with a maintained desktop-UI endpoint.
+- GitHub download tokens are **not** bundled. If an old installer contained a real
+  download token, revoke/rotate that token separately; removing it in a new build
+  does not revoke copies already distributed.
+
 A fully self-contained Electron desktop application that replicates Portal 2.0
 with zero internet dependency. Transactions are committed locally to SQLite and
 synced to the Replit back office when connectivity is restored.

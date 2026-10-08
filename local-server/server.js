@@ -9,7 +9,7 @@ let assignedPort = null;
 
 async function start(config = {}, onUiUpdate) {
   // Initialise UI cache if we have a remote server to pull from
-  if (config.apiBaseUrl && config.uiCacheDir) {
+  if (config.remoteUiUpdates === true && config.apiBaseUrl && config.uiCacheDir) {
     uiCache.init({ dir: config.uiCacheDir, url: config.apiBaseUrl });
 
     // Check for a newer version on startup (don't block the server from starting)
@@ -27,7 +27,7 @@ async function start(config = {}, onUiUpdate) {
   // UI serving priority:
   //   1. ui-cache/ (freshest version downloaded from Replit) — only if complete
   //   2. renderer/  (bundled fallback — always present in packaged builds)
-  const cacheDir = uiCache.getCacheDir();
+  const cacheDir = config.remoteUiUpdates === true ? uiCache.getCacheDir() : null;
   const rendererPath = path.join(__dirname, '..', 'renderer');
 
   // Validate the cache: ensure every asset referenced by index.html is present.

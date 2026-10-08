@@ -3,6 +3,7 @@ const path = require('path');
 const net = require('net');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
+const { UnsignedMacUpdater } = require('./unsigned-mac-updater');
 
 // ── Config (userData path — writable in packaged builds) ─────────────────────
 // app.asar is read-only; all writes go to app.getPath('userData') instead.
@@ -38,7 +39,7 @@ function saveConfigToDisk(newConfig) {
   // supervisorPin is set dynamically by the back office each session — never persist it.
   // Persisting it would cause kioskMode to activate on the next launch even before
   // pairing, making it impossible to exit from the pairing screen.
-  const { supervisorPin: _drop, ...configToSave } = newConfig;
+  const { supervisorPin: _drop, githubToken: _githubToken, ...configToSave } = newConfig;
   fs.writeFileSync(userDataPath, JSON.stringify(configToSave, null, 2));
 }
 
@@ -72,35 +73,37 @@ function setupAutoUpdater() {
     return;
   }
 
-  // Repo is public — no token needed to check or download releases.
-  // If a token is present in config (injected at build time), attach it anyway
-  // for forward-compatibility if the repo ever goes private.
-  const ghToken = config?.githubToken;
-  if (ghToken) {
-    autoUpdater.requestHeaders = { Authorization: `token ${ghToken}` };
+  // Public releases never need a token. Remove legacy bundled tokens from
+  // saved configurations; they must not be sent to the updater.
+  if (config?.githubToken) {
+    delete config.githubToken;
+    saveConfigToDisk(config);
   }
 
-  // Enable auto-download on all platforms.
-  // On macOS we bypass ShipIt (Squirrel.Mac) by extracting the ZIP ourselves
-  // and doing a hot-swap via a detached shell script — no code signature needed.
+  // ShipIt requires Developer ID signing. Unsigned Mac builds instead use a
+  // TLS + SHA-256 verified ZIP and explicit installation, without disabling
+  // Gatekeeper. Windows retains electron-updater's checksum verification.
   const isMac = process.platform === 'darwin';
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = !isMac; // macOS: we install manually
+  const updater = isMac
+    ? new UnsignedMacUpdater({ version: app.getVersion(), directory: path.join(app.getPath('userData'), 'updates') })
+    : autoUpdater;
+  updater.autoDownload = true;
+  updater.autoInstallOnAppQuit = !isMac;
 
-  autoUpdater.on('checking-for-update', () => {
+  updater.on('checking-for-update', () => {
     sendToRenderer('update-status', { state: 'checking' });
   });
 
-  autoUpdater.on('update-available', (info) => {
+  updater.on('update-available', (info) => {
     console.log(`[updater] Update available: v${info.version} — downloading…`);
     sendToRenderer('update-status', { state: 'available', version: info.version });
   });
 
-  autoUpdater.on('update-not-available', () => {
+  updater.on('update-not-available', () => {
     sendToRenderer('update-status', { state: 'current' });
   });
 
-  autoUpdater.on('download-progress', (progress) => {
+  updater.on('download-progress', (progress) => {
     sendToRenderer('update-status', {
       state: 'downloading',
       percent: Math.round(progress.percent),
@@ -108,20 +111,23 @@ function setupAutoUpdater() {
     });
   });
 
-  autoUpdater.on('update-downloaded', (info) => {
+  updater.on('update-downloaded', (info) => {
     console.log(`[updater] Update downloaded: v${info.version}`);
     pendingUpdateFile = info.downloadedFile || null;
-    sendToRenderer('update-status', { state: 'ready', version: info.version });
+    sendToRenderer('update-status', { state: 'ready', version: info.version, requiresConfirmation: isMac });
   });
 
-  autoUpdater.on('error', (err) => {
+  updater.on('error', (err) => {
     console.error('[updater] Error:', err.message);
     sendToRenderer('update-status', { state: 'error', message: err.message });
   });
 
   // Check on launch, then every 4 hours
-  autoUpdater.checkForUpdatesAndNotify();
-  setInterval(() => autoUpdater.checkForUpdatesAndNotify(), 4 * 60 * 60 * 1000);
+  const check = () => updater.checkForUpdatesAndNotify().catch(err => {
+    sendToRenderer('update-status', { state: 'error', message: err.message });
+  });
+  check();
+  setInterval(check, 4 * 60 * 60 * 1000);
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
@@ -145,11 +151,9 @@ app.whenReady().then(async () => {
     sendToRenderer('sync-status', status);
   });
 
-  // Warn operators if no supervisor PIN is set — exit will be blocked in kiosk mode
+  // Unpaired portals stay outside kiosk mode so operators can configure/exit.
   if (!isDev && !config.supervisorPin) {
-    console.warn('[kiosk] WARNING: supervisorPin is not set in config.json. ' +
-      'The portal cannot be exited via the UI until a PIN is configured. ' +
-      'Set supervisorPin in your userData config (equip-portal-config.json) before deploying.');
+    console.info('[kiosk] No supervisor PIN yet; kiosk mode will activate after pairing.');
   }
 
   createWindow();
@@ -455,12 +459,13 @@ ipcMain.handle('install-update', async () => {
         return; // performMacOSUpdate calls app.quit()
       } catch (err) {
         console.error('[updater] macOS hot-swap failed:', err.message);
+        sendToRenderer('update-status', { state: 'error', message: err.message });
       }
     }
-    // Fallback: open releases page + relaunch
+    // Keep the existing app running when installation cannot proceed.
     shell.openExternal('https://github.com/Eqpd/Portal/releases/latest');
-    setTimeout(() => { app.relaunch(); app.exit(0); }, 800);
   } else {
+    supervisorExitAllowed = true;
     autoUpdater.quitAndInstall(false, true);
   }
 });
@@ -478,42 +483,55 @@ async function performMacOSUpdate(zipPath) {
     throw new Error(`Cannot resolve .app path from execPath: ${process.execPath}`);
   }
   const parentDir = path.dirname(currentApp);
+  try {
+    fs.accessSync(parentDir, fs.constants.W_OK);
+  } catch {
+    throw new Error('Copy Equip Portal to Applications before installing an update.');
+  }
 
   // Extract the downloaded ZIP to a temp dir
-  const tmpDir = path.join(os.tmpdir(), `equip-update-${Date.now()}`);
-  fs.mkdirSync(tmpDir, { recursive: true });
-  execFileSync('unzip', ['-q', '-o', zipPath, '-d', tmpDir], { timeout: 60000 });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'equip-update-'));
+  execFileSync('/usr/bin/ditto', ['-x', '-k', zipPath, tmpDir], { timeout: 60000 });
 
   // Locate the .app bundle inside the extracted archive
   const entries = fs.readdirSync(tmpDir);
-  const newAppName = entries.find(e => e.endsWith('.app'));
+  const newAppName = entries.find(e => e === path.basename(currentApp));
   if (!newAppName) throw new Error('No .app bundle found in update archive');
   const extractedApp = path.join(tmpDir, newAppName);
 
   // Stage it alongside the current app so the move is atomic
-  const stagedApp = path.join(parentDir, `${newAppName}.update`);
+  const stageRoot = fs.mkdtempSync(path.join(parentDir, '.equip-portal-update-'));
+  const stagedApp = path.join(stageRoot, newAppName);
   execFileSync('cp', ['-R', extractedApp, stagedApp], { timeout: 30000 });
 
   // Write a detached helper script:
   //   1. Wait for this process to exit
   //   2. Replace old app with the staged one
   //   3. Relaunch the new app
-  const finalApp = path.join(parentDir, newAppName);
-  const scriptPath = path.join(os.tmpdir(), 'equip-portal-update.sh');
+  const scriptPath = path.join(stageRoot, 'install.sh');
   const script = [
     '#!/bin/bash',
-    'sleep 1.5',
-    `rm -rf ${JSON.stringify(finalApp)}`,
-    `mv ${JSON.stringify(stagedApp)} ${JSON.stringify(finalApp)}`,
-    `open ${JSON.stringify(finalApp)}`,
-    `rm -rf ${JSON.stringify(tmpDir)}`,
-    `rm -f ${JSON.stringify(scriptPath)}`,
+    'set -eu',
+    'pid="$1"; current="$2"; staged="$3"; backup="$4"; extracted="$5"',
+    'for attempt in $(seq 1 120); do',
+    '  if ! kill -0 "$pid" 2>/dev/null; then break; fi',
+    '  sleep 0.25',
+    'done',
+    'if kill -0 "$pid" 2>/dev/null; then exit 1; fi',
+    'mv "$current" "$backup"',
+    'if ! mv "$staged" "$current"; then mv "$backup" "$current"; open "$current"; exit 1; fi',
+    'if ! open "$current"; then mv "$current" "$staged"; mv "$backup" "$current"; open "$current"; exit 1; fi',
+    // Preserve the previous app for recovery; do not delete the only working
+    // installation before its replacement is in place.
+    'rm -rf "$extracted"',
   ].join('\n') + '\n';
   fs.writeFileSync(scriptPath, script, { mode: 0o755 });
 
   // Launch the script detached so it survives our process exiting
-  spawn('/bin/bash', [scriptPath], { detached: true, stdio: 'ignore' }).unref();
-
+  spawn('/bin/bash', [scriptPath, String(process.pid), currentApp, stagedApp,
+    path.join(stageRoot, 'previous.app'), tmpDir], { detached: true, stdio: 'ignore' }).unref();
+  supervisorExitAllowed = true;
+  globalShortcut.unregisterAll();
   app.quit();
 }
 

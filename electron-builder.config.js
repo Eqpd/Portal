@@ -1,5 +1,22 @@
 /**
  * electron-builder configuration
+ *
+ * Required environment variables for release builds:
+ *
+ *   macOS signing + notarization:
+ *     CSC_NAME             — Developer ID Application cert name from Keychain
+ *     APPLE_ID             — Apple ID email for the Developer account
+ *     APPLE_ID_PASSWORD    — App-specific password (appleid.apple.com)
+ *     APPLE_TEAM_ID        — 10-char team ID from developer.apple.com
+ *
+ *   Windows signing:
+ *     WIN_CSC_LINK         — Path or URL to the .pfx certificate file
+ *     WIN_CSC_KEY_PASSWORD — Password for the .pfx file
+ *
+ *   Publishing (GitHub Releases):
+ *     GH_TOKEN             — GitHub personal access token (repo scope)
+ *     GH_OWNER             — GitHub org/user that owns the release repo
+ *     GH_REPO              — GitHub repo name for releases
  */
 
 module.exports = {
@@ -11,8 +28,8 @@ module.exports = {
   publish: [
     {
       provider: 'github',
-      owner: 'Eqpd',
-      repo: 'Portal',
+      owner: process.env.GH_OWNER || 'Eqpd',
+      repo: process.env.GH_REPO || 'Portal',
       private: false,
     },
   ],
@@ -23,19 +40,25 @@ module.exports = {
       { target: 'dmg', arch: ['x64', 'arm64'] },
       { target: 'zip', arch: ['x64', 'arm64'] },
     ],
-    identity: process.env.CSC_NAME || null,
+    // Ad-hoc signing works without an Apple Developer account, but does not
+    // grant Developer ID trust or notarisation. First launch needs approval.
+    identity: process.env.CSC_NAME || '-',
     hardenedRuntime: !!process.env.CSC_NAME,
     gatekeeperAssess: false,
     notarize: false,
   },
 
   win: {
-    target: [{ target: 'nsis', arch: ['x64'] }],
+    target: [
+      { target: 'nsis', arch: ['x64'] },
+    ],
     certificateFile: process.env.WIN_CSC_LINK || null,
     certificatePassword: process.env.WIN_CSC_KEY_PASSWORD || null,
     signingHashAlgorithms: ['sha256'],
-    verifyUpdateCodeSignature: true,
-    publisherName: 'Equip Systems',
+    // Unsigned test installers cannot pass Authenticode verification.
+    // electron-updater still verifies the release's SHA-512 checksum.
+    verifyUpdateCodeSignature: !!process.env.WIN_CSC_LINK,
+    ...(process.env.WIN_CSC_LINK ? { publisherName: 'Equip Systems' } : {}),
   },
 
   nsis: {
@@ -49,6 +72,7 @@ module.exports = {
 
   files: [
     'main.js',
+    'unsigned-mac-updater.js',
     'preload.js',
     'renderer/**',
     'local-server/**',

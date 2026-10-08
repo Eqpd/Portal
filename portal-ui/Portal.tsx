@@ -158,7 +158,7 @@ export default function Portal() {
     | { state: 'current' }
     | { state: 'available'; version: string }
     | { state: 'downloading'; percent: number }
-    | { state: 'ready'; version: string }
+    | { state: 'ready'; version: string; requiresConfirmation?: boolean }
     | { state: 'error'; message: string };
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus>({ state: 'idle' });
   const [updateCountdown, setUpdateCountdown] = useState<number | null>(null);
@@ -274,7 +274,7 @@ export default function Portal() {
     if (eApi.onUpdateStatus) {
       eApi.onUpdateStatus((status: AppUpdateStatus) => {
         setAppUpdate(status);
-        if (status.state === 'ready') setUpdateCountdown(60);
+        if (status.state === 'ready' && !status.requiresConfirmation) setUpdateCountdown(60);
         else setUpdateCountdown(null);
       });
     }
@@ -299,13 +299,14 @@ export default function Portal() {
   // Countdown timer: tick once per second, install at 0
   useEffect(() => {
     if (updateCountdown === null) return;
+    if (phase !== 'idle') return;
     if (updateCountdown <= 0) {
       (window as any).electronAPI?.installUpdate?.();
       return;
     }
     const t = setTimeout(() => setUpdateCountdown(c => (c !== null ? c - 1 : null)), 1000);
     return () => clearTimeout(t);
-  }, [updateCountdown]);
+  }, [updateCountdown, phase]);
 
   // ── IPC RFID subscription (tcp / serial modes only) ──────────────────────────
   useEffect(() => {
@@ -1061,6 +1062,7 @@ export default function Portal() {
               </span>
               <div className="ml-auto flex items-center gap-2">
                 <button
+                  disabled={phase !== 'idle'}
                   onClick={() => { setUpdateCountdown(null); (window as any).electronAPI?.installUpdate?.(); }}
                   className="flex items-center gap-1.5 bg-white text-emerald-700 font-semibold text-xs px-3 py-1 rounded-full hover:bg-emerald-50 transition-colors"
                 >
