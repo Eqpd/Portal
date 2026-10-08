@@ -57,7 +57,7 @@ jobs:
           ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" --method POST \
             -f tag_name="v$VERSION" -f target_commitish="$GITHUB_SHA" \
             -f name="Equip Portal $VERSION" -F draft=true \
-            -f body="Unsigned desktop release. On macOS, copy the app to Applications and approve it once under Privacy & Security → Open Anyway. No Apple Developer certificate is used. Built from commit $GITHUB_SHA." --jq .id)
+            -f body="Desktop build candidate. macOS has no Apple Developer ID certificate or notarisation. An unsigned-developer warning is not the same as a malware warning: never override a malware warning. Built from commit $GITHUB_SHA. Public release may be held while macOS distribution is investigated." --jq .id)
           echo "release_id=$ID" >> "$GITHUB_OUTPUT"
   build:
     needs: prepare
@@ -86,8 +86,24 @@ jobs:
           GH_REPO: Portal
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npm run build:${{ matrix.platform }} -- --publish always
+      - name: Verify actual Mac signatures, not just successful packaging
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for folder in mac mac-arm64; do
+            APP="dist/$folder/Equip Portal.app"
+            test -d "$APP"
+            codesign --verify --deep --strict --verbose=2 "$APP"
+            DETAILS=$(codesign --display --verbose=4 "$APP" 2>&1)
+            printf '%s\n' "$DETAILS"
+            printf '%s\n' "$DETAILS" | grep -q 'Signature=adhoc'
+          done
+          # These checks prove valid ad-hoc signatures, not Apple notarisation,
+          # malware clearance, or permission to launch on the user's Mac.
   publish:
     needs: [prepare, build]
+    if: ${{ vars.PORTAL_RELEASE_HOLD != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Publish only after macOS and Windows both succeed

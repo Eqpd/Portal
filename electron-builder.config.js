@@ -43,6 +43,8 @@ module.exports = {
     // Ad-hoc signing works without an Apple Developer account, but does not
     // grant Developer ID trust or notarisation. First launch needs approval.
     identity: process.env.CSC_NAME || '-',
+    entitlements: 'build/entitlements.mac.plist',
+    entitlementsInherit: 'build/entitlements.mac.plist',
     hardenedRuntime: !!process.env.CSC_NAME,
     gatekeeperAssess: false,
     notarize: false,
@@ -52,13 +54,17 @@ module.exports = {
     target: [
       { target: 'nsis', arch: ['x64'] },
     ],
-    certificateFile: process.env.WIN_CSC_LINK || null,
-    certificatePassword: process.env.WIN_CSC_KEY_PASSWORD || null,
-    signingHashAlgorithms: ['sha256'],
+    ...(process.env.WIN_CSC_LINK ? {
+      signtoolOptions: {
+        certificateFile: process.env.WIN_CSC_LINK,
+        certificatePassword: process.env.WIN_CSC_KEY_PASSWORD || undefined,
+        signingHashAlgorithms: ['sha256'],
+        publisherName: 'Equip Systems',
+      },
+    } : {}),
     // Unsigned test installers cannot pass Authenticode verification.
     // electron-updater still verifies the release's SHA-512 checksum.
     verifyUpdateCodeSignature: !!process.env.WIN_CSC_LINK,
-    ...(process.env.WIN_CSC_LINK ? { publisherName: 'Equip Systems' } : {}),
   },
 
   nsis: {

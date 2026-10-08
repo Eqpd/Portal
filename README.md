@@ -2,6 +2,14 @@
 
 ## macOS without an Apple Developer certificate
 
+**Distribution hold:** version 1.0.19 was withdrawn after a macOS malware warning.
+Its old build tool silently skipped the requested ad-hoc signature. New builds
+use a signing-capable builder and must pass strict signature verification, but
+remain drafts while the warning is investigated. A valid signature alone does
+not establish that malware detection was a false positive. Do not override a
+malware warning. `PORTAL_RELEASE_HOLD=true` in the Portal repository keeps new
+builds out of public updates without stopping private source syncing.
+
 The current installers are **ad-hoc signed, not Developer ID signed or notarised**.
 They are intended for trusted testing. Ad-hoc signing supports Apple Silicon
 without requiring an Apple Developer account; it does not remove Gatekeeper warnings.
@@ -30,7 +38,9 @@ fully trusted distribution will require Developer ID signing and notarisation la
   including permission to update its workflow.
 - Portal's **Build and Publish** action tests changes, allocates a newer version,
   builds Intel/Apple Silicon Mac and Windows installers, then publishes only after
-  both operating-system jobs succeed. Failed builds remain draft releases.
+  both operating-system jobs and actual Mac signature checks succeed. Failed
+  builds remain draft releases; the distribution hold also keeps successful
+  builds as drafts until the reported macOS warning is investigated.
 - Installed apps check public GitHub releases at launch and every four hours.
   Mac downloads are HTTPS-only and SHA-256 verified against GitHub's asset digest.
   Click **Install now** while the portal is idle to apply an update. The previous
